@@ -1,0 +1,4 @@
+black~=24.3.0
+coma>=3.0.1
+dacite>=1.8.1
+#pandas  # Uncomment to use io/data.py:load_records_csv().
