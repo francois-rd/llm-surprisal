@@ -82,6 +82,8 @@ def enum_dict_factory(data) -> dict:
     """
     Recursively checks for Enums and converts any that are found to their respective
     values. NOTE: Recursion operates only on objects of type Dict and List.
+    NOTE: Tuple-types are explicitly not supported because they get converted to
+    lists in JSON, which can then not be reloaded.
     """
     new_data = []
     for k, v in data:
@@ -97,36 +99,42 @@ def enum_dict_factory(data) -> dict:
     return dict(new_data)
 
 
-def ensure_path(file_path: str) -> str:
+def ensure_path(file_path: str, is_dir: bool = False) -> str:
     """Creates all parent folders of a file path (if needed). Returns the file path."""
-    Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+    path = Path(file_path) if is_dir else Path(file_path).parent
+    path.mkdir(parents=True, exist_ok=True)
     return file_path
 
 
-def save_lines(file_path: str, *objs: T, to_string_fn: Callable[[T], str] = str):
+def save_lines(
+    file_path: str, *objs: T, mode: str = "w", to_string_fn: Callable[[T], str] = str
+):
     """Saves each object as a string to the file path, one object per line."""
     str_objs = [to_string_fn(o) + os.linesep for o in objs]
-    with open(ensure_path(file_path), "w", encoding="utf-8") as f:
+    with open(ensure_path(file_path), mode, encoding="utf-8") as f:
         f.writelines(str_objs)
 
 
-def save_json(file_path: str, obj, **kwargs):
+def save_json(file_path: str, obj: Any, mode: str = "w", **kwargs):
     """Saves the object to the file path. kwargs are passed to json.dump()."""
-    with open(ensure_path(file_path), "w", encoding="utf-8") as f:
+    with open(ensure_path(file_path), mode, encoding="utf-8") as f:
         json.dump(obj, f, **kwargs)
 
 
-def save_jsonl(file_path: str, *objs: Any, **kwargs):
+def save_jsonl(file_path: str, *objs: Any, mode: str = "w", **kwargs):
     """
     Saves each object as a JSON string to the file path, one object per line.
     kwargs are passed to json.dumps().
     """
-    save_lines(file_path, *objs, to_string_fn=lambda o: json.dumps(o, **kwargs))
+    save_lines(
+        file_path, *objs, mode=mode, to_string_fn=lambda o: json.dumps(o, **kwargs)
+    )
 
 
 def save_dataclass_json(
     file_path: str,
     obj: Any,
+    mode: str = "w",
     dict_factory: Callable = enum_dict_factory,
     **kwargs,
 ):
@@ -134,13 +142,14 @@ def save_dataclass_json(
     Saves the dataclass object to the file path. kwargs are passed to json.dumps().
     dict_factory is passed to dataclasses.asdict().
     """
-    with open(ensure_path(file_path), "w", encoding="utf-8") as f:
+    with open(ensure_path(file_path), mode, encoding="utf-8") as f:
         json.dump(asdict(obj, dict_factory=dict_factory), f, **kwargs)
 
 
 def save_dataclass_jsonl(
     file_path: str,
     *objs: Any,
+    mode: str = "w",
     dict_factory: Callable = enum_dict_factory,
     **kwargs,
 ):
@@ -152,7 +161,7 @@ def save_dataclass_jsonl(
     def helper(o):
         return json.dumps(asdict(o, dict_factory=dict_factory), **kwargs)
 
-    save_lines(file_path, *objs, to_string_fn=helper)
+    save_lines(file_path, *objs, mode=mode, to_string_fn=helper)
 
 
 def dumps_dataclasses(

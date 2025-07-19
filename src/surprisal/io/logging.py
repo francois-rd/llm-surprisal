@@ -1,6 +1,8 @@
 from typing import Optional
 import logging
 
+from .data import ensure_path
+
 # The default logging level for the entire app.
 DEFAULT_LEVEL = logging.INFO
 
@@ -21,6 +23,7 @@ def init_logger(
         logger.setLevel(DEFAULT_LEVEL)
     else:
         logger.setLevel(level)
+    ensure_path(filename)
     handler = logging.FileHandler(filename=filename, mode=filemode, encoding=encoding)
     handler.setFormatter(logging.Formatter(fmt=format_, datefmt=datefmt))
     logger.addHandler(handler)
@@ -34,3 +37,20 @@ def init_logger(
 def get_logger(name: str) -> logging.Logger:
     """Returns the Logger with the given name."""
     return logging.getLogger(name)
+
+
+class ConditionalPrinter:
+    def __init__(self, condition: bool):
+        """
+        Prints only if 'condition' is True.
+        Usage example:
+
+            cprint = ConditionalPrinter(config.verbose)
+            ...
+            cprint(*args, **kwargs)  # Same args and kwargs as built-in print().
+        """
+        self.condition = condition
+
+    def __call__(self, *args, **kwargs) -> None:
+        if self.condition:
+            print(*args, **kwargs)
