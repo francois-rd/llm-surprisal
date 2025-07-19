@@ -1,0 +1,7 @@
+parsers:
+  no_parser:
+    parser_type: NONE
+  true_false:
+    parser_type: OPTIONS
+    parser_data:
+      options: ["TRUE", "FALSE"]

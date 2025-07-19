@@ -1,0 +1,6 @@
+root_dir: ..
+data_dir: ${root_dir}/data
+resources_dir: ${data_dir}/resources
+results_dir: ${data_dir}/results
+concept_net_dir: ${resources_dir}/ConceptNet
+experiment1_dir: ${results_dir}/experiment1

@@ -1,0 +1,34 @@
+api_env_var: null
+vllm_slurm_job_id: null
+vllm_base_url: http://127.0.0.1:8080/v1
+use_system_prompt: true
+use_chat: true
+message_type_to_role_map:
+  SYSTEM: system
+  USER: user
+  ASSISTANT: assistant
+message_type_suffix:
+  SYSTEM: '
+
+
+    '
+  USER: '
+
+    '
+  ASSISTANT: '
+
+
+    '
+chat_completion_query_params:
+  max_completion_tokens: 5
+  seed: 314159
+  logprobs: true
+  top_logprobs: 2
+  extra_body:
+    prompt_logprobs: 1
+completion_query_params:
+  max_tokens: 5
+  seed: 314159
+  logprobs: 5
+  extra_body:
+    prompt_logprobs: 1

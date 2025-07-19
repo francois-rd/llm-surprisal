@@ -1,0 +1,31 @@
+rankers:
+  random:
+    method: RANDOM
+    data:
+      seed: 42
+  pos_tag:
+    method: CNET_HIERARCHY
+    data:
+      pos: true
+      seed: 42
+  pos_to_sense_tag:
+    method: CNET_HIERARCHY
+    data:
+      pos: true
+      kb: true
+      sense: true
+      seed: 42
+  free_pos_tag:
+    method: CNET_HIERARCHY
+    data:
+      pos: true
+      count_none_as_match: true
+      seed: 42
+  free_pos_to_sense_tag:
+    method: CNET_HIERARCHY
+    data:
+      pos: true
+      kb: true
+      sense: true
+      count_none_as_match: true
+      seed: 42

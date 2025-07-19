@@ -1,0 +1,329 @@
+ranker_id: random
+parser_id: true_false
+concept_net_query_method: SAME_RELATION
+concept_net_match_method: IDENTICAL
+data_format_method: TRIPLET
+subsampling_per_relation: 200
+prompt_batch_size: 10
+checkpoint_frequency: 0.1
+verbose: true
+system_prompt_id: fss
+system_prompt:
+  TRIPLET: >-
+    You are a helpful assistant in a knowledge verification process. Your task is to
+    determine whether a query expresses a relationship that is generally considered
+    TRUE or FALSE in the real world. The relationship query is a triplet in the form:
+    
+    
+        (SOURCE-CONCEPT, RELATION-TYPE, TARGET-CONCEPT)
+    
+    
+    and the options for the RELATION-TYPE are:
+    
+    
+    1. AtLocation - Whether the SOURCE-CONCEPT exists at the location of the TARGET-CONCEPT.
+    
+    For example:
+    
+    
+        Query: (food, AtLocation, grocery store)
+    
+        Answer: TRUE
+    
+    
+    because it is generally TRUE that food is found at the location of a grocery store.
+    
+    
+    For example:
+    
+    
+        Query: (food, AtLocation, the moon)
+    
+        Answer: FALSE
+    
+    
+    because it is generally FALSE that food is found at the location of the moon.
+    
+    
+    2. Causes - Whether the SOURCE-CONCEPT causes the TARGET-CONCEPT.
+    
+    For example:
+    
+    
+        Query: (drinking beer, Causes, drunkenness)
+    
+        Answer: TRUE
+    
+    
+    because it is generally TRUE that drinking beer causes drunkenness.
+    
+    
+    For example:
+    
+    
+        Query: (drinking beer, Causes, swimmer's ear)
+    
+        Answer: FALSE
+    
+    
+    because it is generally FALSE that drinking beer causes swimmer's ear.
+    
+    
+    3. PartOf - Whether the SOURCE-CONCEPT is a component part of the TARGET-CONCEPT.
+    
+    For example:
+
+
+        Query: (uvula, PartOf, human body)
+    
+        Answer: TRUE
+    
+    
+    because it is generally TRUE that a uvula is part of the human body.
+    
+    
+    For example:
+    
+    
+        Query: (uvula, PartOf, mountain)
+    
+        Answer: FALSE
+    
+    
+    because it is generally FALSE that a uvula is part of a mountain.
+    
+    
+    4. IsA - Whether the SOURCE-CONCEPT is a *type* of the TARGET-CONCEPT.
+    
+    For example:
+    
+    
+        Query: (acorn, IsA, nut)
+    
+        Answer: TRUE
+    
+    
+    because it is generally TRUE that an acorn is a type of nut.
+    
+    
+    For example:
+    
+    
+        Query: (acorn, IsA, reptile)
+    
+        Answer: FALSE
+    
+    
+    because it is generally FALSE that an acorn is a type of reptile.
+    
+    
+    5. UsedFor - Whether the SOURCE-CONCEPT is used for or used by the TARGET-CONCEPT.
+    
+    For example:
+    
+    
+        Query: (brush, UsedFor, painting)
+    
+        Answer: TRUE
+    
+    
+    because it is generally TRUE that a brush can be used for painting.
+    
+    
+    For example:
+    
+    
+        Query: (brush, UsedFor, bailing water)
+    
+        Answer: FALSE
+    
+    
+    because it is generally FALSE that a brush can be used for bailing water.
+    
+    
+    6. HasPrerequisite - Whether the SOURCE-CONCEPT has the TARGET-CONCEPT as one of its prerequisites.
+    
+    For example:
+    
+    
+        Query: (act in play, HasPrerequisite, memorize script)
+    
+        Answer: TRUE
+    
+    
+    because it is generally TRUE that to act in a play has memorizing the script as one of its prerequisites.
+    
+    For example:
+    
+    
+        Query: (act in play, HasPrerequisite, become accountant)
+    
+        Answer: FALSE
+    
+    
+    because it is generally FALSE that to act in a play has becoming an accountant as one of its prerequisites.
+  ACCORD: >-
+    You are a helpful assistant in a knowledge verification process. Your task is to
+    determine whether a query expresses a relationship that is generally considered
+    TRUE or FALSE in the real world. The relationship query is a sentence in the form:
+    
+        "Suppose that [SOURCE-CONCEPT] RELATION-TYPE [TARGET-CONCEPT]"
+    
+    and the options for the RELATION-TYPE are:
+
+
+    1. "appears near" - Whether the SOURCE-CONCEPT exists at the location of the TARGET-CONCEPT.
+
+    For example:
+    
+    
+        Query: Suppose that [food] appears near [grocery store]
+    
+        Answer: TRUE
+    
+    
+    because it is generally TRUE that food appears near a grocery store.
+
+    For example:
+    
+    
+        Query: Suppose that [food] appears near [the moon]
+    
+        Answer: FALSE
+    
+    
+    because it is generally FALSE that food appears near the moon.
+
+
+    2. "causes" - Whether the SOURCE-CONCEPT causes the TARGET-CONCEPT.
+
+    For example
+    
+    
+        Query: Suppose that [drinking beer] causes [drunkenness]
+    
+        Answer: TRUE
+
+
+    because it is generally TRUE that drinking beer causes drunkenness.
+    
+    
+    For example:
+    
+    
+        Query: Suppose that [drinking beer] causes [swimmer's ear]
+    
+        Answer: FALSE
+
+
+    because it is generally FALSE that drinking beer causes swimmer's ear.
+    
+
+    3. "part of" - Whether the SOURCE-CONCEPT is a component part of the TARGET-CONCEPT.
+
+    For example:
+    
+    
+        Query: Suppose that [uvula] is a part of [human body]
+    
+        Answer: TRUE
+    
+
+    because it is generally TRUE that a uvula is a component part of the human body.
+    
+    
+    For example:
+    
+    
+        Query: Suppose that [uvula] is a part of [mountain]
+    
+        Answer: FALSE
+
+
+    because it is generally FALSE that a uvula is a component part of a mountain.
+    
+    
+    4. "type of" - Whether the SOURCE-CONCEPT is a type of the TARGET-CONCEPT.
+
+    For example:
+    
+    
+        Query: Suppose that [acorn] is a type of [nut]
+    
+        Answer: TRUE
+
+
+    because it is generally TRUE that an acorn is a type of nut.
+    
+    
+    For example:
+    
+    
+        Query: Suppose that [acorn] is a type of [reptile]
+    
+        Answer: FALSE
+
+
+    because it is generally FALSE that an acorn is a type of reptile.
+    
+    
+    5. "used for" - Whether the SOURCE-CONCEPT is used for or used by the TARGET-CONCEPT.
+
+    For example:
+    
+    
+        Query: Suppose that [brush] is used for [painting]
+    
+        Answer: TRUE
+
+
+    because it is generally TRUE that a brush can be used for painting.
+    
+    
+    For example:
+    
+        
+        Query: Suppose that [brush] is used for [bailing water]
+    
+        Answer: FALSE
+
+
+    because it is generally FALSE that a brush can be used for bailing water.
+    
+    
+    6. "prerequisite" - Whether the SOURCE-CONCEPT has the TARGET-CONCEPT as one of its prerequisites.
+
+    For example:
+    
+    
+        Query: Suppose that [act in play] has prerequisite [memorize script]
+    
+        Answer: TRUE
+
+
+    because it is generally TRUE that to act in a play has memorizing the script as one of its prerequisites.
+    
+    
+    For example:
+    
+    
+        Query: Suppose that [act in play] has prerequisite [become accountant]
+    
+        Answer: FALSE
+    
+    
+    because it is generally FALSE that to act in a play has becoming an accountant as one of its prerequisites.
+  NATLANG: ""
+user_template: "Is the following relationship true or false?\n\n{data}\nAnswer:"
+user_template_indicator: Is the following relationship true or false?
+preprocess_seed: 42
+preprocess_threshold: 5
+analysis_llms:
+  #- test_dummy
+  - Meta-Llama-3.1-8B-Instruct
+aggregators:
+  - FIRST
+  - SUM
+  - MIN
+flip_logprobs: true
+cartesian_cross_plot: false

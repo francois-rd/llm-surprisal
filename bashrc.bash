@@ -14,7 +14,8 @@ fi
 
 # Library path (needed only for Pycharm because of seeming bug).
 # NOTE: Change your python version if needed.
-export PYTHONPATH=$PYTHONPATH:"$COMA_PROJECT_ROOT_DIR"/.venv/lib/python3.9/site-packages
+PY_VERSION=python3.10
+export PYTHONPATH=$PYTHONPATH:"$COMA_PROJECT_ROOT_DIR"/.venv/lib/"$PY_VERSION"/site-packages
 
 # Environment variables for launching without commands and configs.
 export COMA_DEFAULT_CONFIG_DIR="$COMA_PROJECT_ROOT_DIR"/launch
@@ -26,12 +27,57 @@ mkdir -p "$COMA_DEFAULT_CONFIG_DIR"
 # Alias for program entry.
 launch () {
   pushd "$COMA_DEFAULT_CONFIG_DIR" > /dev/null || exit
-  python "$COMA_PROJECT_ROOT_DIR"/src/main.py "$@"
+  "$PY_VERSION" "$COMA_PROJECT_ROOT_DIR"/src/main.py "$@"
   popd > /dev/null || exit
 }
 export -f launch
 
 # Basic terminal auto-complete.
 complete -W "
+exp.1.preprocess
+exp.1.make.prompts
+exp.1.count.errors
+exp.1.analysis
 test.launch
+test.load.conceptnet
+test.logprob.alignment
 " launch
+
+# Alias for commands launched from scripts rather than directly.
+launch-llm () {
+  pushd "$COMA_DEFAULT_CONFIG_DIR" > /dev/null || exit
+  bash vec_inf.bash "$@"
+  popd > /dev/null || exit
+}
+export -f launch-llm
+
+launch-exp1-infer () {
+  pushd "$COMA_DEFAULT_CONFIG_DIR" > /dev/null || exit
+  bash experiment1/infer.bash "$@"
+  popd > /dev/null || exit
+}
+export -f launch-exp1-infer
+
+launch-exp1-infer-loop () {
+  START_TIME=$(date +%s)
+  for q in ALL_RELATIONS SAME_RELATION OTHER_RELATIONS SAME_SOURCE ; do
+    for f in TRIPLET ACCORD ; do
+      echo concept_net_query_method="$q" data_format_method="$f"
+      launch-exp1-infer "$@" -- concept_net_query_method="$q" data_format_method="$f"
+    done
+  done
+  END_TIME=$(date +%s)
+  echo "Completed all runs in $((END_TIME - START_TIME)) total seconds."
+}
+
+launch-exp1-analysis-loop () {
+  START_TIME=$(date +%s)
+  for q in ALL_RELATIONS SAME_RELATION OTHER_RELATIONS SAME_SOURCE ; do
+    for f in TRIPLET ACCORD ; do
+      echo concept_net_query_method="$q" data_format_method="$f"
+      launch exp.1.analysis concept_net_query_method="$q" data_format_method="$f"
+    done
+  done
+  END_TIME=$(date +%s)
+  echo "Completed all runs in $((END_TIME - START_TIME)) total seconds."
+}

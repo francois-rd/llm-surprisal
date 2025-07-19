@@ -22,6 +22,7 @@ def import_submodules(
         try:
             results[full_name] = importlib.import_module(full_name)
         except ModuleNotFoundError:
+            print(f"Can't import: {full_name}")
             continue
         if recursive and is_pkg:
             results.update(import_submodules(full_name))
