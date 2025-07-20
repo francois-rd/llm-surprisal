@@ -15,6 +15,7 @@ fi
 # Library path (needed only for Pycharm because of seeming bug).
 # NOTE: Change your python version if needed.
 PY_VERSION=python3.10
+export PY_VERSION
 export PYTHONPATH=$PYTHONPATH:"$COMA_PROJECT_ROOT_DIR"/.venv/lib/"$PY_VERSION"/site-packages
 
 # Environment variables for launching without commands and configs.
