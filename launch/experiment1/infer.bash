@@ -1,6 +1,6 @@
 #!/bin/bash
 
-while getopts ":i:m:r:d" opt; do
+while getopts ":i:m:" opt; do
   case ${opt} in
     i) implementation="${OPTARG}" ;;
     m) llm="${OPTARG}" ;;
