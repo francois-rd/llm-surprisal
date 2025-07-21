@@ -120,6 +120,8 @@ class _MakeLogprobs:
     def _clean_up_token(self, token: str) -> str:
         if "llama" in self.nickname.lower():
             return token.replace("Ċ", "\n").replace("Ġ", " ")
+        if "deepseek" in self.nickname.lower():
+            return token.replace("Ċ", "\n").replace("Ġ", " ")
         return token
 
 
