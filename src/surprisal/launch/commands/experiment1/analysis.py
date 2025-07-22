@@ -47,11 +47,10 @@ class DataLoader:
         self.analysis_dir = analysis_dir
         self.indicator = user_template_indicator
         self.aggregators = aggregators
-        self.data = None
-        self.logger = None
+        self.data = self.logger = None
 
-    def load(self, inference_path: str) -> None:
-        self.data = {}
+    def load(self, inference_path: str, llm: Nickname) -> None:
+        self.data, self.logger = {}, None
         for inference in load_dataclass_jsonl(inference_path, t=Inference):
             # TODO: When it comes time for exp 2, we need to differentiate between the
             #  logprobs of the answer choices as they first appear and are given to
@@ -73,7 +72,7 @@ class DataLoader:
             if inference.error_message is not None:
                 continue
             for logprob_type in LogprobType:
-                logprobs = self._get_logprobs(inference, logprob_type)
+                logprobs = self._get_logprobs(inference, logprob_type, llm)
                 self._fill(inference, logprobs, logprob_type)
 
     def get(self) -> pd.DataFrame:
@@ -86,7 +85,10 @@ class DataLoader:
         )
 
     def _get_logprobs(
-        self, inference: Inference, logprob_type: LogprobType
+        self,
+        inference: Inference,
+        logprob_type: LogprobType,
+        llm: Nickname,
     ) -> list[float] | None:
         target = self._get_target(inference, logprob_type)
         logprobs = Logprobs.from_dict(inference.derived_data["prompt_logprobs"])
@@ -94,13 +96,11 @@ class DataLoader:
         # Validate the start index (if any).
         start_idx = self._get_start_idx(logprob_type, logprobs)
         if start_idx is None:
-            now = datetime.now().isoformat()
-            log_file = os.path.join(self.analysis_dir, f"{now}.log")
-            self.logger = self.logger or init_logger("exp.1.analysis", log_file)
             no_line_breaks = logprobs.to_text().replace("\n", "<NL>")
-            self.logger.info(
+            self._log_failure(
+                llm,
                 f"GroupID={inference.prompt_data.group_id}: Start index based on target"
-                f" '{self.indicator}' has multiple occurrences in '{no_line_breaks}'."
+                f" '{self.indicator}' has multiple occurrences in '{no_line_breaks}'.",
             )
             return None
 
@@ -108,16 +108,21 @@ class DataLoader:
         spaced_sequences = list(logprobs.indices_of(target, start_idx=start_idx))
         spaced_sequence = self._extract(spaced_sequences)
         if spaced_sequence is None:
-            now = datetime.now().isoformat()
-            log_file = os.path.join(self.analysis_dir, f"{now}.log")
-            self.logger = self.logger or init_logger("exp.1.analysis", log_file)
             no_line_breaks = logprobs.to_text().replace("\n", "<NL>")
-            self.logger.info(
+            self._log_failure(
+                llm,
                 f"GroupID={inference.prompt_data.group_id}: Target '{target}' has "
-                f"{len(spaced_sequences)} occurrences in '{no_line_breaks}'."
+                f"{len(spaced_sequences)} occurrences in '{no_line_breaks}'.",
             )
             return None
         return spaced_sequence.to_chosen_logprobs()
+
+    def _log_failure(self, llm: Nickname, text: str) -> None:
+        logger_name = f"exp.1.analysis.{llm}"
+        now = datetime.now().isoformat()
+        log_file = os.path.join(self.analysis_dir, f"{llm}-{now}.log")
+        self.logger = self.logger or init_logger(logger_name, log_file)
+        self.logger.info(text)
 
     def _get_target(self, inference: Inference, logprob_type: LogprobType) -> str:
         if logprob_type == LogprobType.IN:
@@ -178,7 +183,7 @@ class DataLoader:
 
 
 def make_plot_path(plots_dir: str, main_type: str, llm: Nickname, sub_type: str) -> str:
-    base_path = os.path.join(plots_dir, main_type, llm.replace("/", "-"), sub_type)
+    base_path = os.path.join(plots_dir, main_type, llm, sub_type)
     return ensure_path(base_path, is_dir=True)
 
 
@@ -561,9 +566,7 @@ class TTest:
             self.data.setdefault(relation_type, []).append(p_value)
 
     def end_run(self, llm: Nickname):
-        file_path = os.path.join(
-            self.analysis_dir, self.binary, llm.replace("/", "-") + ".csv"
-        )
+        file_path = os.path.join(self.analysis_dir, self.binary, llm + ".csv")
         pd.DataFrame(self.data).to_csv(ensure_path(file_path), index=False)
         self.data = None
 
@@ -768,12 +771,12 @@ class Experiment1Analysis:
 
     def run(self):
         for walk in walk_files(self.cfg.llm_output_dir(self.path.experiment1_dir)):
-            inference_path, nickname = walk.path, walk.no_ext()
+            inference_path, nickname = walk.path, walk.no_ext().replace("/", "-")
             if self._skip(nickname):
                 continue
             self.print("Analyzing results of model:", nickname)
             self.print("    Loading data...")
-            self.data.load(inference_path)
+            self.data.load(inference_path, nickname)
             self.print("    Running factuality analysis...")
             FactualityAnalyzer(self.path, self.cfg).run(self.data.get(), nickname)
             self.print("    Running label analysis...")
