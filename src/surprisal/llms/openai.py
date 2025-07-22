@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from datetime import datetime
@@ -122,6 +124,20 @@ class _MakeLogprobs:
             return token.replace("Ċ", "\n").replace("Ġ", " ")
         if "deepseek" in self.nickname.lower():
             return token.replace("Ċ", "\n").replace("Ġ", " ")
+        if "qwen" in self.nickname.lower():
+            return token.replace("Ċ", "\n").replace("Ġ", " ")
+        if "gemma" in self.nickname.lower():
+            return token.replace("▁", " ")  # Bold underscore... Not regular.
+        if "mistral" in self.nickname.lower():
+            # Unclear if \n becomes a literal <0x0A> or the unicode \u000A, which
+            # I believe is identical to \n (i.e., "\u000A" == "\n")
+            token = (
+                token.replace("<0x0A>", "\n")
+                .replace("<\u000A>", "\n")
+                .replace("<\n>", "\n")
+                .replace("0x0A", "\n")  # Must be placed AFTER <0x0A> to work properly.
+            )
+            return token.replace("▁", " ")  # Bold underscore... Not regular.
         return token
 
 
