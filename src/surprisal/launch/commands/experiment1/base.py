@@ -53,6 +53,8 @@ class Config:
     subsampling_per_relation: int = 200
     prompt_batch_size: int = 10
     checkpoint_frequency: float = 5 * 60  # Save every 5 minutes.
+    chosen_only_logprob: bool = True
+    trim_inference_logprobs: bool = True
     verbose: bool = False
     system_prompt_id: str = ""
     system_prompt: dict[str, str] = field(

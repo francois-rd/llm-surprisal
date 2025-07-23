@@ -13,9 +13,17 @@ from ..io import init_logger
 from ..prompting import PromptData, Message, MessageType
 
 
-class _MakeLogprobs:
-    def __init__(self, nickname: Nickname):
+class MakeOpenAILogprobs:
+    def __init__(
+        self,
+        nickname: Nickname,
+        chosen_only: bool = False,
+        trim_indicator: str | None = None,
+        **_,
+    ):
         self.nickname = nickname
+        self.chosen_only = chosen_only
+        self.indicator = trim_indicator
 
     def __call__(
         self, raw_logprobs, raw_format: Literal["vllm", "chat_completion", "completion"]
@@ -23,13 +31,20 @@ class _MakeLogprobs:
         if raw_logprobs is None:
             return None
         if raw_format == "vllm":
-            return self._from_vllm(raw_logprobs)
+            return self._maybe_trim(self._from_vllm(raw_logprobs))
         elif raw_format == "completion":
-            return self._from_completion(raw_logprobs)
+            return self._maybe_trim(self._from_completion(raw_logprobs))
         elif raw_format == "chat_completion":
-            return self._from_chat(raw_logprobs)
+            return self._maybe_trim(self._from_chat(raw_logprobs))
         else:
             raise ValueError(f"Unsupported raw format for logprobs: {raw_format}")
+
+    def _maybe_trim(self, logprobs: Logprobs) -> Logprobs:
+        if self.indicator:
+            sequences = list(logprobs.indices_of(self.indicator))
+            start_idx = min(sequences[0].indices) if len(sequences) == 1 else 0
+            return Logprobs(sequence=logprobs.sequence[start_idx:])
+        return logprobs
 
     def _from_vllm(self, raw_logprobs) -> Logprobs:
         all_logprobs = []
@@ -56,6 +71,7 @@ class _MakeLogprobs:
             else:
                 # There may or may not be extra items beyond the chosen token.
                 others[logprob.rank] = logprob
+        others = {} if self.chosen_only else others
         return RankedLogprob(chosen, others=others, ranking="absolute")
 
     def _from_completion(self, raw_logprobs) -> Logprobs | None:
@@ -83,13 +99,14 @@ class _MakeLogprobs:
         if not contains_chosen:
             all_logprobs.append((chosen_token, chosen_logprob))
         ranked_chosen, ranked_others = None, {}
-        sorted_by_logprob = sorted(all_logprobs, key=lambda lp: lp[1], reverse=True)
+        sorted_by_logprob = sorted(all_logprobs, key=lambda lp_: lp_[1], reverse=True)
         for i, (token, logprob) in enumerate(sorted_by_logprob):
             lp = Logprob(token=self._clean_up_token(token), rank=i + 1, logprob=logprob)
             if token == chosen_token:
                 ranked_chosen = lp
             else:
                 ranked_others[i] = lp
+        ranked_others = {} if self.chosen_only else ranked_others
         return RankedLogprob(ranked_chosen, ranked_others, ranking="relative")
 
     def _from_chat(self, raw_logprobs) -> Logprobs | None:
@@ -110,13 +127,14 @@ class _MakeLogprobs:
         if not contains_chosen:
             all_logprobs.append((raw_logprob.token, raw_logprob.logprob))
         ranked_chosen, ranked_others = None, {}
-        sorted_by_logprob = sorted(all_logprobs, key=lambda lp: lp[1], reverse=True)
+        sorted_by_logprob = sorted(all_logprobs, key=lambda lp_: lp_[1], reverse=True)
         for i, (token, logprob) in enumerate(sorted_by_logprob):
             lp = Logprob(token=self._clean_up_token(token), rank=i + 1, logprob=logprob)
             if token == raw_logprob.token:
                 ranked_chosen = lp
             else:
                 ranked_others[i] = lp
+        ranked_others = {} if self.chosen_only else ranked_others
         return RankedLogprob(ranked_chosen, ranked_others, ranking="relative")
 
     def _clean_up_token(self, token: str) -> str:
@@ -314,7 +332,7 @@ class OpenAILLM(LLM):
                 "mutually exclusive. Exactly 1 must be non-None."
             )
         self.client = OpenAI(base_url=base_url, api_key=api_key)
-        self.make_logprobs = _MakeLogprobs(nickname)
+        self.make_logprobs = MakeOpenAILogprobs(nickname, **kwargs)
 
     def invoke(self, prompt_data: PromptData, *args, **kwargs) -> LLMOutput:
         from openai import OpenAIError
@@ -322,7 +340,7 @@ class OpenAILLM(LLM):
         data = prompt_data.additional_data.get("derived_data", None)
         try:
             f_args = (prompt_data.messages,)
-            out = retry_call(self._do_invoke, fargs=f_args, delay=10)
+            out = retry_call(self._do_invoke, fargs=f_args, fkwargs=kwargs, delay=10)
         except OpenAIError as e:
             return LLMOutput(
                 generated_text=None, error_message=str(e), derived_data=data
@@ -332,13 +350,21 @@ class OpenAILLM(LLM):
                 generated_text=None, error_message=out.generated_text, derived_data=data
             )
         data = data or {}
-        data["logprobs"] = out.logprobs
-        data["prompt_logprobs"] = out.prompt_logprobs
+        if out.logprobs is not None:
+            data["logprobs"] = out.logprobs
+        if out.prompt_logprobs is not None:
+            data["prompt_logprobs"] = out.prompt_logprobs
         return LLMOutput(
             generated_text=out.generated_text, error_message=None, derived_data=data
         )
 
-    def _do_invoke(self, messages: list[Message]) -> _InvocationOutput:
+    def _do_invoke(
+        self,
+        messages: list[Message],
+        add_logprobs: bool = False,
+        add_prompt_logprobs: bool = False,
+        **_,
+    ) -> _InvocationOutput:
         roles, suffix = self.cfg.message_type_to_role_map, self.cfg.message_type_suffix
         new_messages = [
             {"role": roles[m.message_type], "content": m.text} for m in messages
@@ -366,8 +392,11 @@ class OpenAILLM(LLM):
             # Logprobs contains both a "content" and a "refusal" attribute. Supposedly,
             # one will always be non-None. Whichever it is, they have the same format:
             #   a list of ChatCompletionTokenLogprob objects.
-            logprobs = response.choices[0].logprobs
-            logprobs = self.make_logprobs(logprobs, "chat_completion")
+            if add_logprobs:
+                logprobs = response.choices[0].logprobs
+                logprobs = self.make_logprobs(logprobs, "chat_completion")
+            else:
+                logprobs = None
 
             # This attribute only exists if the OpenAI API is calling a local vLLM
             # server. If not requested, it is then None. It has a vLLM specific format
@@ -390,7 +419,11 @@ class OpenAILLM(LLM):
             # This is always a Logprobs object or None. None definitely occurs if the
             # logprobs where not requested. Can it also occur if content filtering
             # removes the generated text? Unclear.
-            logprobs = self.make_logprobs(response.choices[0].logprobs, "completion")
+            if add_logprobs:
+                logprobs = response.choices[0].logprobs
+                logprobs = self.make_logprobs(logprobs, "completion")
+            else:
+                logprobs = None
 
             # This attribute only exists if the OpenAI API is calling a local vLLM
             # server. If not requested, it is then None. It has a vLLM specific format
@@ -400,5 +433,8 @@ class OpenAILLM(LLM):
 
             # This is presumably the only time a refusal happens.
             refusal = response.choices[0].finish_reason == "content_filter"
-        prompt_logprobs = self.make_logprobs(prompt_logprobs, "vllm")
+        if add_prompt_logprobs:
+            prompt_logprobs = self.make_logprobs(prompt_logprobs, "vllm")
+        else:
+            prompt_logprobs = None
         return _InvocationOutput(generated_text, logprobs, prompt_logprobs, refusal)

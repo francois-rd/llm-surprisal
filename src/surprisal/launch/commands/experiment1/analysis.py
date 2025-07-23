@@ -140,6 +140,11 @@ class DataLoader:
     def _get_start_idx(
         self, logprob_type: LogprobType, logprobs: Logprobs
     ) -> int | None:
+        # TODO: we could speed this up by not computing indicator again if we trimmed
+        #  during inference (via checking that cfg.trim_inference_logprobs is true).
+        #  However, if we want to be able to reuse old inferences (prior to trimming
+        #  being implemented) without having to redo them from scratch, we still need
+        #  this check here. Safest to just leave it in despite the computational cost.
         if logprob_type == LogprobType.IN:
             return 0
         elif logprob_type == LogprobType.OUT:

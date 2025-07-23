@@ -8,4 +8,4 @@ from .base import (
 )
 from .load import load_llm
 from .dummy import DummyConfig, DummyLLM
-from .openai import OpenAIConfig, OpenAILLM
+from .openai import MakeOpenAILogprobs, OpenAIConfig, OpenAILLM

@@ -61,12 +61,17 @@ class Experiment1Infer:
             method=self.cfg.data_format_method,
             formatter=TermFormatter(language="en"),
         )
+        trim_indicator = None
+        if self.cfg.trim_inference_logprobs:
+            trim_indicator = self.cfg.user_template_indicator
         self.infer = CheckpointedParallelInference(
             infer=ParallelInference(
                 parser=ParserManager(parsers).get(self.cfg.parser_id),
                 llms=llms,
                 llm_cfg=llm_cfg_placeholder,
                 out_dir=out,
+                chosen_only=self.cfg.chosen_only_logprob,
+                trim_indicator=trim_indicator,
             ),
             out_file=self.out_file,
             batch_size=self.cfg.prompt_batch_size,
@@ -91,7 +96,7 @@ class Experiment1Infer:
         return prompts
 
     def run(self):
-        self.infer(self.prompts)
+        self.infer(self.prompts, add_prompt_logprobs=True)
 
 
 @command(name="exp.1.count.errors")

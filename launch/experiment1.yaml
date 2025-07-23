@@ -6,6 +6,8 @@ data_format_method: TRIPLET
 subsampling_per_relation: 200
 prompt_batch_size: 10
 checkpoint_frequency: 0.1
+chosen_only_logprob: true
+trim_inference_logprobs: true
 verbose: true
 system_prompt_id: fss
 system_prompt:
