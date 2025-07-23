@@ -78,6 +78,13 @@ class DataLoader:
                 self._fill(inference, logprobs, logprob_type)
 
     def get(self) -> pd.DataFrame:
+        if not self.data:
+            raise ValueError(
+                "Empty data frame. Remember to call DataLoader.load() first. "
+                "If you have, an empty data frame is a sign that the input data format "
+                "is incorrect. For example, the tokens may not have been cleaned up "
+                "and contain Ċ and Ġ tokens (causing logprob parsing to fail)."
+            )
         # Keep only complete groups.
         complete_group_size = len(["F", "AF"]) * len(["T", "F"]) * len(LogprobType)
         return (
