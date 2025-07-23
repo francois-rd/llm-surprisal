@@ -23,22 +23,22 @@ class AggregatorOption(Enum):
     MIN = "MIN"
     MAX = "MAX"
 
-    def aggregate(self, logprobs: list[float]) -> float:
+    def aggregate(self, logprobs: list[float], negate: bool = False) -> float:
         if self == AggregatorOption.SUM:
-            return -sum(logprobs)
+            return (-1 if negate else 1) * sum(logprobs)
         elif self == AggregatorOption.MEAN:
             # Logprobs should never be empty, so division by 0 should never happen.
-            return -sum(logprobs) / len(logprobs)
+            return (-1 if negate else 1) * sum(logprobs) / len(logprobs)
         elif self == AggregatorOption.FIRST:
             # Logprobs should never be empty, so indexing error should never happen.
-            return -logprobs[0]
+            return (-1 if negate else 1) * logprobs[0]
         elif self == AggregatorOption.LAST:
             # Logprobs should never be empty, so indexing error should never happen.
-            return -logprobs[-1]
+            return (-1 if negate else 1) * logprobs[-1]
         elif self == AggregatorOption.MIN:
-            return -min(logprobs)
+            return (-1 if negate else 1) * min(logprobs)
         elif self == AggregatorOption.MAX:
-            return -max(logprobs)
+            return (-1 if negate else 1) * max(logprobs)
         else:
             raise ValueError(f"Unsupported aggregator: {self}")
 

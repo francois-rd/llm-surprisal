@@ -41,11 +41,13 @@ class DataLoader:
         formatter: ConceptNetFormatter,
         analysis_dir: str,
         user_template_indicator: str,
+        flip_logprobs: bool,
         aggregators: list[AggregatorOption],
     ):
         self.formatter = formatter
         self.analysis_dir = analysis_dir
         self.indicator = user_template_indicator
+        self.flip = flip_logprobs
         self.aggregators = aggregators
         self.data = self.logger = None
 
@@ -178,8 +180,8 @@ class DataLoader:
         self.data.setdefault("RelationType", []).append(triplet.relation)
         self.data.setdefault("GroupID", []).append(inference.prompt_data.group_id)
         self.data.setdefault("LogprobType", []).append(logprob_type.value)
-        for agg in self.aggregators:
-            self.data.setdefault(agg.value, []).append(agg.aggregate(logprobs))
+        for a in self.aggregators:
+            self.data.setdefault(a.value, []).append(a.aggregate(logprobs, self.flip))
 
 
 def make_plot_path(plots_dir: str, main_type: str, llm: Nickname, sub_type: str) -> str:
@@ -626,7 +628,7 @@ class FactualityAnalyzer(Analyzer):
             binary_column_name="Factuality",
             binary_options=("Factual", "Anti-Factual"),
             test_type="relative",
-            test_alternative="greater",
+            test_alternative="less" if self.cfg.flip_logprobs else "greater",
         )
 
     def run(self, df: pd.DataFrame, nickname: Nickname):
@@ -667,7 +669,7 @@ class LabelAnalyzer(Analyzer):
             #  selection bias creeps in (not to mention potential catastrophic loss of
             #  data quantity, leading to possibly loosing statistical power).
             test_type="independent",
-            test_alternative="greater",
+            test_alternative="less" if self.cfg.flip_logprobs else "greater",
         )
         # TODO: Similarly, the labels cannot be used to create the binary scatter plots
         #  unless we restrict to only those GroupIDs where both T and F are outputted.
@@ -759,6 +761,7 @@ class Experiment1Analysis:
             ),
             analysis_dir=self.cfg.analysis_dir(path.experiment1_dir),
             user_template_indicator=self.cfg.user_template_indicator,
+            flip_logprobs=self.cfg.flip_logprobs,
             aggregators=self.cfg.aggregators,
         )
         self.print = ConditionalPrinter(self.cfg.verbose)
