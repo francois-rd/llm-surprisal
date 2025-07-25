@@ -21,14 +21,16 @@ class Ranker:
         # TODO: External post-processing on the result to narrow the candidates.
         #  For example, making sure the candidates match:
         #  - DONE: the desired part of speech as marked in ConceptNet
-        #  - the desired part of speech (inferred when not marked in ConceptNet...
+        #  - DONE: the desired part of speech (inferred when not marked in ConceptNet...
         #    or even if marked)
-        #  - number, gender, and verb tense agreement (if any) wrt factual target (or
-        #    wrt the factual source (assuming that the factual source and target had
-        #    been in agreement in the first place))
+        #  - DONE: morphological agreement (if any) wrt factual target
         #  - task and usage (what does this mean again?)
         #  - semantic distance from a factual target
-        #  - sentiment agreement wrt sentiment of the whole factual triplet
+        #  - DONE (spacy-only sentiment, though): sentiment agreement between the
+        #    F target and AF target, assuming their sentiment is self-consistent whether
+        #    alone or in the complete triplet (which is unlikely)
+        #  - sentiment agreement between the whole F triplet and AF triplet, regardless
+        #    of sentiment of F and AF targets alone.
         #  - etc.
         raise NotImplementedError
 

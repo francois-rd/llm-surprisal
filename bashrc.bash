@@ -40,6 +40,7 @@ exp.1.make.prompts
 exp.1.count.errors
 exp.1.analysis
 test.launch
+test.linguistic.features
 test.load.conceptnet
 test.logprob.alignment
 " launch
