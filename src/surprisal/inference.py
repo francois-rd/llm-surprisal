@@ -90,7 +90,10 @@ class CheckpointIndicator:
 
     def start(self, total: int) -> None:
         self.start_time = None if self.interval is None else time()
-        self.modulus = None if self.percentile is None else int(self.percentile * total)
+        self.modulus = None
+        if self.percentile is not None:
+            # If percent * total < 1, then int floors to 0, which leads to DivZeroErr.
+            self.modulus = max(int(self.percentile * total), 1)
 
     def do_checkpoint(self, iteration: int) -> bool:
         if self.disabled:
