@@ -1,4 +1,5 @@
 from dataclasses import dataclass, replace
+from typing import Any, Hashable
 from enum import Enum
 import os
 import re
@@ -13,7 +14,7 @@ Term = str
 QueryResult = set[Term]
 
 
-@dataclass
+@dataclass(frozen=True)
 class Triplet:
     source: Term
     relation: RelationType
@@ -169,28 +170,32 @@ class TermComponents:
 
 
 class TermFormatter:
-    def __init__(self, language: str):
+    def __init__(self, language: str, cache: bool = False):
         self.has_main_pattern = re.compile("/c/../([^/]+)")
         self.has_pos_pattern = re.compile("/c/../([^/]+)/([^/]+)")
         self.has_kb_pattern = re.compile("/c/../([^/]+)/([^/]+)/([^/]+)")
         self.has_sense_pattern = re.compile("/c/../([^/]+)/([^/]+)/([^/]+)/([^/]+)")
         self.language = language
+        self.text_cache = {} if cache else None
+        self.comp_cache = {} if cache else None
 
-    def ensure_term(self, text: str | Term) -> Term:
-        """Formats text (either plain text or existing Term) into a ConceptNet Term."""
-        if text.startswith(f"/c/{self.language}/"):
-            # Term is already probably formatted correctly. Still, have it be
-            # in lowercase and without spaces just in case.
-            return text.lower().replace(" ", "_")
-        elif text.startswith("/c/"):
-            raise ValueError(f"Mismatch for {text=} and language={self.language}.")
-        else:
-            return f"/c/{self.language}/{text.lower().replace(' ', '_')}"
+    @staticmethod
+    def _check_cache(cache: dict | None, key: Hashable) -> Any | None:
+        return None if cache is None else cache.get(key, None)
+
+    @staticmethod
+    def _fill_cache(cache: dict | None, key: Hashable, value: Any) -> Any:
+        if cache is not None:
+            cache.setdefault(key, value)
+        return value
 
     def ensure_plain_text(self, text: str | Term) -> str:
         """Formats text (either ConceptNet Term or plain text) into plain text."""
-        main = self.get_main_tag(text)
-        return text if main is None else main.replace("_", " ")
+        result = self._check_cache(self.text_cache, text)
+        if result is None:
+            main = self.get_main_tag(text)
+            result = text if main is None else main.replace("_", " ")
+        return self._fill_cache(self.text_cache, text, result)
 
     def get_main_tag(self, text: str | Term) -> str | None:
         """
@@ -251,13 +256,16 @@ class TermFormatter:
         return match.group(4)
 
     def decompose(self, text: str | Term) -> TermComponents:
-        return TermComponents(
-            language=self.language,
-            main=self.get_main_tag(text),
-            pos=self.get_pos_tag(text),
-            kb=self.get_kb_tag(text),
-            sense=self.get_sense_tag(text),
-        )
+        result = self._check_cache(self.comp_cache, text)
+        if result is None:
+            result = TermComponents(
+                language=self.language,
+                main=self.get_main_tag(text),
+                pos=self.get_pos_tag(text),
+                kb=self.get_kb_tag(text),
+                sense=self.get_sense_tag(text),
+            )
+        return self._fill_cache(self.comp_cache, text, result)
 
 
 class ConceptNet:
@@ -286,8 +294,7 @@ class ConceptNet:
 
     def query(self, query: Query) -> QueryResult:
         """Returns a set of candidate instantiations for a Query."""
-        source = self.formatter.ensure_term(query.source_term)
-        query = replace(query, source_term=source)
+        query = replace(query, source_term=query.source_term)
         if query.method is None:
             return self._factual_query(query)
         return self._anti_factual_query(query)

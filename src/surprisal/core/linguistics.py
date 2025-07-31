@@ -2,8 +2,9 @@ from dataclasses import dataclass
 
 import spacy
 from spacy.tokens import Token
+from tqdm import tqdm
 
-from .conceptnet import ConceptNetFormatter, FormatMethod, Triplet
+from .conceptnet import ConceptNetFormatter, FormatMethod, Term, Triplet
 
 
 @dataclass
@@ -24,6 +25,16 @@ class LinguisticFeatures:
     children: bool = False
 
 
+LinguisticsID = str
+_MISSING = object()
+_INCONSISTENT = "_INCONSISTENT"
+
+
+@dataclass
+class LinguisticsConfig:
+    features: dict[LinguisticsID, LinguisticFeatures]
+
+
 @dataclass
 class AnalysisResult:
     text: str
@@ -35,9 +46,13 @@ class AnalysisResult:
     ner_type: str | None
     sentiment: float | None
     children: list["AnalysisResult"]
+    raw_term: Term | None  # Only needed for caching and doesn't affect consistency.
+    idx: int  # Only needed for caching and doesn't affect consistency.
 
     @classmethod
-    def from_token(cls, token: Token, features: LinguisticFeatures) -> "AnalysisResult":
+    def from_token(
+        cls, token: Token, features: LinguisticFeatures, raw_term: Term | None
+    ) -> "AnalysisResult":
         return AnalysisResult(
             text=token.text,
             pos=token.pos_ if features.pos else None,
@@ -47,7 +62,9 @@ class AnalysisResult:
             lemma=token.lemma_ if features.lemma else None,
             ner_type=token.ent_type_ if features.ner_type else None,
             sentiment=token.sentiment if features.sentiment else None,
-            children=[cls.from_token(c, features) for c in token.children],
+            children=[cls.from_token(c, features, None) for c in token.children],
+            raw_term=raw_term,
+            idx=token.i,
         )
 
     def is_consistent_with(
@@ -106,12 +123,34 @@ class AnalysisResult:
             )
         return True
 
+    def matches_concept_net(self, cnet_pos: str | None) -> bool:
+        if cnet_pos is None:
+            return self.pos is None
+        if cnet_pos == "n":
+            return self.pos in ["NOUN", "PROPN"]
+        if cnet_pos == "v":
+            return self.pos == "VERB"
+        if cnet_pos == "a":
+            return self.pos == "ADJ"
+        if cnet_pos == "r":
+            return self.pos == "ADV"
+        return False
+
 
 class AccordAnalyzer:
-    def __init__(self, features: LinguisticFeatures, formatter: ConceptNetFormatter):
+    def __init__(
+        self,
+        features: LinguisticFeatures,
+        formatter: ConceptNetFormatter,
+        verbose: bool,
+    ):
         self.features = features
         self.formatter = self._validate_formatter(formatter)
+        self.verbose = verbose
         self.nlp = spacy.load("en_core_web_md")
+        self.dep_caches: dict[Term, dict[Triplet, str | None]] = {}
+        self.analysis_cache: dict[Term, AnalysisResult] = {}
+        self.consistency_cache: dict[tuple[Term, Term], bool] = {}
 
     @staticmethod
     def _validate_formatter(formatter: ConceptNetFormatter) -> ConceptNetFormatter:
@@ -124,47 +163,88 @@ class AccordAnalyzer:
         else:
             raise ValueError(f"Unsupported format method: {formatter.method}")
 
-    def analyze_factual(self, triplet: Triplet) -> AnalysisResult | None:
-        """Returns the analysis of this factual triplet, or None if inconsistent."""
-        return self._analyze(triplet)
+    def validate_targets(self, factual_triplets: list[Triplet]) -> None:
+        """
+        TODO: A target is only valid if it's contextual DEP tag is consistent across all
+         triplets in which it occurs (as well as being self-consistent across the same).
+        """
+        for triplet in tqdm(factual_triplets) if self.verbose else factual_triplets:
+            self._cache_target(triplet)
+        for target, raw_analysis in self.analysis_cache.items():
+            deps = set(self.dep_caches[target].values())
+            if len(deps) == 1:
+                raw_analysis.dep = deps.pop()
+            else:
+                raw_analysis.dep = _INCONSISTENT
+
+    def _cache_target(self, triplet: Triplet) -> None:
+        # Get the raw analysis, either from cache or by computing.
+        raw_analysis = self.analysis_cache.get(triplet.target, _MISSING)
+        if raw_analysis is _MISSING:
+            raw_analysis = self._analyze_raw(triplet.target)
+            self.analysis_cache[triplet.target] = raw_analysis
+
+        # Ensure the dependency sub-cache is lacking this particular triplet.
+        dep_cache = self.dep_caches.setdefault(triplet.target, {})
+        if dep_cache.get(triplet, _MISSING) is not _MISSING:
+            raise ValueError(f"Triplet is not unique in ConceptNet: {triplet}")
+
+        # Record the dependency tag if this triplet is self-consistent. Else None.
+        contextual_analysis = self._analyze_contextual(raw_analysis.idx, triplet)
+        consistent = raw_analysis.is_consistent_with(contextual_analysis, self.features)
+        dep_cache[triplet] = contextual_analysis.dep if consistent else _INCONSISTENT
+
+    def is_valid_factual(self, target: Term) -> bool:
+        """Raises KeyError if target has not been preprocessed."""
+        return self.analysis_cache[target].dep != _INCONSISTENT
 
     def is_valid_anti_factual(
-        self, triplet: Triplet, factual_analysis: AnalysisResult
+        self, target: Term, factual_target: Term, concept_net_pos: str
     ) -> bool:
         """
-        Returns True only if this anti-factual triplet's analysis is
-        both self-consistent and consistent with the factual analysis.
+        Returns True only if this anti-factual triplet's analysis is both consistent
+        with the analysis of the factual target and the ConceptNet components' POS
+        (if LinguisticFeatures permits). Anti-factual contextual consistency is not
+        checked in order to leverage caching; however, factual contextual consistency
+        has been previously validated.
+
+        Raises KeyError if either target has not been (factually) validated.
         """
-        analysis = self._analyze(triplet)
-        if analysis is None:
-            return False
-        return analysis.is_consistent_with(
-            factual_analysis,
-            features=self.features,
-            include_top_level_dep=True,
-            exclude_text=True,
-        )
+        # Retrieve the consistency result, if any.
+        value = self.consistency_cache.get((target, factual_target), None)
+        if value is not None:
+            return value
 
-    def _analyze(self, triplet: Triplet) -> AnalysisResult | None:
-        # Analyze just the target term (as plain text) to understand its raw features.
-        raw_analysis, idx = None, None
-        target = self.formatter.formatter.ensure_plain_text(triplet.target)
-        for token in self.nlp(target):
-            if token.dep_ == "ROOT":  # "ROOT" is baked into spacy.
-                raw_analysis = AnalysisResult.from_token(token, self.features)
-                idx = token.i
-        if raw_analysis is None or idx is None:
-            raise ValueError(f"Spacy cannot determine a ROOT for: {triplet.target}")
+        analysis = self.analysis_cache[target]
+        factual_analysis = self.analysis_cache[factual_target]
 
-        # Analyze the target term in the context of the full ACCORD-style statement.
-        contextual_analysis = self._analyze_contextual(idx, self.formatter(triplet))
+        if _INCONSISTENT in [analysis.dep, factual_analysis.dep]:
+            # If either analysis is not (factually) self-consistent, then it's no good.
+            value = False
+        elif self.features.pos and not analysis.matches_concept_net(concept_net_pos):
+            # If the target analysis is not consistent with ConceptNet, then no good.
+            value = False
+        else:
+            # Determine consistency between target and factual.
+            value = analysis.is_consistent_with(
+                factual_analysis,
+                features=self.features,
+                include_top_level_dep=True,
+                exclude_text=True,
+            )
 
-        # Compare the two according to desired linguistic features.
-        if raw_analysis.is_consistent_with(contextual_analysis, self.features):
-            return contextual_analysis
-        return None
+        # Cache and return.
+        self.consistency_cache[(target, factual_target)] = value
+        return value
 
-    def _analyze_contextual(self, target_index: int, context: str) -> AnalysisResult:
+    def _analyze_raw(self, target: Term) -> AnalysisResult:
+        for tok in self.nlp(self.formatter.formatter.ensure_plain_text(target)):
+            if tok.dep_ == "ROOT":  # "ROOT" is baked into spacy.
+                return AnalysisResult.from_token(tok, self.features, target)
+        raise ValueError(f"Spacy cannot determine a ROOT for: {target}")
+
+    def _analyze_contextual(self, target_idx: int, triplet: Triplet) -> AnalysisResult:
+        context = self.formatter(triplet)
         doc = self.nlp(context)
         last_bracket_index = None
         for token in doc:
@@ -173,5 +253,5 @@ class AccordAnalyzer:
         if last_bracket_index is None:
             raise ValueError(f"Couldn't find '[' token in: {context}")
         for token in doc:
-            if token.i - last_bracket_index - 1 == target_index:
-                return AnalysisResult.from_token(token, self.features)
+            if token.i - last_bracket_index - 1 == target_idx:
+                return AnalysisResult.from_token(token, self.features, triplet.target)

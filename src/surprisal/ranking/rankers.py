@@ -2,7 +2,7 @@ from random import Random
 from typing import Any
 from enum import Enum
 
-from ..core import QueryResult, Term, TermFormatter
+from ..core import QueryResult, Term, TermComponents, TermFormatter
 
 
 RankMetric = Any
@@ -42,8 +42,8 @@ class Ranker:
         """
         raise NotImplementedError
 
-    def is_likely_low_ranked(self, term: Term, *args, **kwargs) -> bool:
-        """Returns whether the given term would likely receive a low rank."""
+    def is_likely_low_ranked(self, *args, **kwargs) -> bool:
+        """Returns whether a term would likely receive a low rank."""
         raise NotImplementedError
 
 
@@ -59,7 +59,7 @@ class RandomRanker(Ranker):
     def is_worst_outcome(self, _: RankMetric | None) -> bool:
         return False  # No random outcome is worse than any other, on average.
 
-    def is_likely_low_ranked(self, term: Term, *args, **kwargs) -> bool:
+    def is_likely_low_ranked(self, *args, **kwargs) -> bool:
         return False  # No random ranking is worse than any other, on average.
 
 
@@ -110,7 +110,9 @@ class ConceptNetHierarchyRanker(Ranker):
         """
         match, no_match = set(), set()
         for term in result:
-            if self._matches(term, formatter, factual_target):
+            factual_comps = formatter.decompose(factual_target)
+            term_comps = formatter.decompose(term)
+            if factual_comps.matches(term_comps, **self.kwargs):
                 match.add(term)
             else:
                 no_match.add(term)
@@ -125,12 +127,7 @@ class ConceptNetHierarchyRanker(Ranker):
         return metric == 0
 
     def is_likely_low_ranked(
-        self,
-        term: Term,
-        *args,
-        formatter: TermFormatter = None,
-        comparison: Term = None,
-        **kwargs
+        self, *args, main: TermComponents, comparison: TermComponents = None, **kwargs
     ) -> bool:
         """
         Formatter is mandatory. Comparison is optional. If non-None, returns whether
@@ -140,18 +137,12 @@ class ConceptNetHierarchyRanker(Ranker):
         useless terms before a comparison is even known.
         """
         if comparison is not None:
-            return not self._matches(term, formatter, comparison)
-        tags = formatter.decompose(formatter.ensure_term(term))
+            return not comparison.matches(main, **self.kwargs)
         strict = not self.kwargs["count_none_as_match"]
-        if strict and self.kwargs["pos"] and tags.pos is None:
+        if strict and self.kwargs["pos"] and main.pos is None:
             return True
-        if strict and self.kwargs["kb"] and tags.pos is None:
+        if strict and self.kwargs["kb"] and main.pos is None:
             return True
-        if strict and self.kwargs["sense"] and tags.pos is None:
+        if strict and self.kwargs["sense"] and main.pos is None:
             return True
         return False
-
-    def _matches(self, term: Term, formatter: TermFormatter, factual_target: Term):
-        factual = formatter.decompose(formatter.ensure_term(factual_target))
-        test = formatter.decompose(formatter.ensure_term(term))
-        return factual.matches(test, **self.kwargs)

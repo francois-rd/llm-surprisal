@@ -1,5 +1,6 @@
 ranker_id: random
 parser_id: true_false
+linguistics_id: TO_NER
 concept_net_query_method: SAME_RELATION
 concept_net_match_method: IDENTICAL
 data_format_method: TRIPLET

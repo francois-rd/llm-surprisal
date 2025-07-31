@@ -36,6 +36,7 @@ export -f launch
 # Basic terminal auto-complete.
 complete -W "
 exp.1.preprocess
+exp.1.compare.conceptnet.spacy
 exp.1.make.prompts
 exp.1.count.errors
 exp.1.analysis

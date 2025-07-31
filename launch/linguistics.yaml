@@ -1,0 +1,51 @@
+features:
+  no_ling:
+    pos: false
+    tag: false
+    dep: false
+    full_morph: false
+    lemma: false
+    ner_type: false
+    sentiment: false
+    sentiment_tol: 0.001
+    children: false
+  POS_ONLY:
+    pos: true
+    tag: false
+    dep: false
+    full_morph: false
+    lemma: false
+    ner_type: false
+    sentiment: false
+    sentiment_tol: 0.001
+    children: false
+  POS_TAG_DEP_MORPH:
+    pos: true
+    tag: true
+    dep: true
+    full_morph: true
+    lemma: false
+    ner_type: false
+    sentiment: false
+    sentiment_tol: 0.001
+    children: false
+  TO_MORPH_WITH_CHILDREN:
+    pos: true
+    tag: true
+    dep: true
+    full_morph: true
+    lemma: false
+    ner_type: false
+    sentiment: false
+    sentiment_tol: 0.001
+    children: true
+  TO_NER:
+    pos: true
+    tag: true
+    dep: true
+    full_morph: true
+    lemma: false
+    ner_type: true
+    sentiment: false
+    sentiment_tol: 0.001
+    children: false

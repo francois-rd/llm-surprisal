@@ -2,10 +2,17 @@ from dataclasses import dataclass, field
 from enum import Enum
 import os
 
-from ....core import AntiFactualMethod, FormatMethod, Query, Term, TermMatchMethod
 from ....parsing import ParserID
 from ....ranking import RankerID
 from ....llms import Nickname
+from ....core import (
+    AntiFactualMethod,
+    FormatMethod,
+    LinguisticsID,
+    Query,
+    Term,
+    TermMatchMethod,
+)
 
 
 @dataclass
@@ -47,6 +54,7 @@ class AggregatorOption(Enum):
 class Config:
     ranker_id: RankerID = "random"
     parser_id: ParserID = "no_parser"
+    linguistics_id: LinguisticsID = "no_ling"
     concept_net_query_method: AntiFactualMethod = AntiFactualMethod.SAME_RELATION
     concept_net_match_method: TermMatchMethod = TermMatchMethod.IDENTICAL
     data_format_method: FormatMethod = FormatMethod.TRIPLET
@@ -79,6 +87,7 @@ class Config:
         self,
         ranker: bool = True,
         parser: bool = True,
+        linguistics: bool = True,
         query_method: bool = True,
         match_method: bool = True,
         format_method: bool = True,
@@ -92,6 +101,8 @@ class Config:
             items.append(self.ranker_id)
         if parser:
             items.append(self.parser_id)
+        if linguistics:
+            items.append(self.linguistics_id)
         if query_method:
             items.append(self.concept_net_query_method.value)
         if match_method:
