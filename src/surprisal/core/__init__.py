@@ -1,4 +1,3 @@
-from .logprobs import Logprob, Logprobs, Rank, RankedLogprob, SpacedSubsequence, Token
 from .mcq import QAGroupID, Label, Term
 from .monitor import await_server
 from .conceptnet import (
@@ -22,4 +21,13 @@ from .linguistics import (
     LinguisticsConfig,
     LinguisticFeatures,
     LinguisticsID,
+)
+from .logprobs import (
+    AggregatorOption,
+    Logprob,
+    Logprobs,
+    Rank,
+    RankedLogprob,
+    SpacedSubsequence,
+    Token,
 )

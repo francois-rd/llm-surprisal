@@ -1,5 +1,6 @@
 from typing import Any, Callable, Iterable, Literal
 from dataclasses import dataclass
+from enum import Enum
 import re
 
 Rank = int
@@ -106,3 +107,31 @@ class Logprobs:
         if match is None:
             return None
         return match.group(1)
+
+
+class AggregatorOption(Enum):
+    SUM = "SUM"
+    MEAN = "MEAN"
+    FIRST = "FIRST"
+    LAST = "LAST"
+    MIN = "MIN"
+    MAX = "MAX"
+
+    def aggregate(self, logprobs: list[float], negate: bool = False) -> float:
+        if self == AggregatorOption.SUM:
+            return (-1 if negate else 1) * sum(logprobs)
+        elif self == AggregatorOption.MEAN:
+            # Logprobs should never be empty, so division by 0 should never happen.
+            return (-1 if negate else 1) * sum(logprobs) / len(logprobs)
+        elif self == AggregatorOption.FIRST:
+            # Logprobs should never be empty, so indexing error should never happen.
+            return (-1 if negate else 1) * logprobs[0]
+        elif self == AggregatorOption.LAST:
+            # Logprobs should never be empty, so indexing error should never happen.
+            return (-1 if negate else 1) * logprobs[-1]
+        elif self == AggregatorOption.MIN:
+            return (-1 if negate else 1) * min(logprobs)
+        elif self == AggregatorOption.MAX:
+            return (-1 if negate else 1) * max(logprobs)
+        else:
+            raise ValueError(f"Unsupported aggregator: {self}")

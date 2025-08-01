@@ -11,6 +11,7 @@ from ....inference import Inference
 from ....llms import Nickname
 from ....prompting import PromptType
 from ....core import (
+    AggregatorOption,
     ConceptNetFormatter,
     Label,
     Logprobs,
@@ -27,7 +28,7 @@ from ....io import (
     walk_files,
 )
 
-from .base import AggregatorOption, Config
+from .base import Config
 
 
 class LogprobType(Enum):
