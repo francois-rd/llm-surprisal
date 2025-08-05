@@ -68,10 +68,10 @@ class Experiment1Infer:
             infer=ParallelInference(
                 parser=ParserManager(parsers).get(self.cfg.parser_id),
                 llms=llms,
-                llm_cfg=llm_cfg_placeholder,
-                out_dir=out,
-                chosen_only=self.cfg.chosen_only_logprob,
-                trim_indicator=trim_indicator,
+                llm_cfg=llm_cfg_placeholder,  # Passed to all LLMs' init.
+                out_dir=out,  # Passed to OpenaiLLM's init.
+                chosen_only=self.cfg.chosen_only_logprob,  # Passed to OpenaiLLM's init.
+                trim_indicator=trim_indicator,  # Passed to OpenaiLLM's init.
             ),
             out_file=self.out_file,
             batch_size=self.cfg.prompt_batch_size,
