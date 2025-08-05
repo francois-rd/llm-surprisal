@@ -40,6 +40,8 @@ exp.1.compare.conceptnet.spacy
 exp.1.make.prompts
 exp.1.count.errors
 exp.1.analysis
+exp.2.make.prompts
+exp.2.test.accord.loader
 test.launch
 test.linguistic.features
 test.load.conceptnet
@@ -80,6 +82,23 @@ launch-exp1-analysis-loop () {
       echo concept_net_query_method="$q" data_format_method="$f"
       launch exp.1.analysis concept_net_query_method="$q" data_format_method="$f"
     done
+  done
+  END_TIME=$(date +%s)
+  echo "Completed all runs in $((END_TIME - START_TIME)) total seconds."
+}
+
+launch-exp2-infer () {
+  pushd "$COMA_DEFAULT_CONFIG_DIR" > /dev/null || exit
+  bash experiment2/infer.bash "$@"
+  popd > /dev/null || exit
+}
+export -f launch-exp2-infer
+
+launch-exp2-infer-loop () {
+  START_TIME=$(date +%s)
+  for subset in BASELINE ONE TWO THREE FOUR FIVE ; do
+    echo subset="$subset"
+    launch-exp2-infer "$@" -- subset="$subset"
   done
   END_TIME=$(date +%s)
   echo "Completed all runs in $((END_TIME - START_TIME)) total seconds."

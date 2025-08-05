@@ -3,4 +3,14 @@ data_dir: ${root_dir}/data
 resources_dir: ${data_dir}/resources
 results_dir: ${data_dir}/results
 concept_net_dir: ${resources_dir}/ConceptNet
+accord_dir: ${resources_dir}/ACCORD
+accord_reductions_file: ${accord_dir}/reductions.csv
+accord_csqa_file: ${accord_dir}/csqa_base.jsonl
+accord_baseline_file: ${accord_dir}/0.jsonl
+accord_tree_size_1_file: ${accord_dir}/1.jsonl
+accord_tree_size_2_file: ${accord_dir}/2.jsonl
+accord_tree_size_3_file: ${accord_dir}/3.jsonl
+accord_tree_size_4_file: ${accord_dir}/4.jsonl
+accord_tree_size_5_file: ${accord_dir}/5.jsonl
 experiment1_dir: ${results_dir}/experiment1
+experiment2_dir: ${results_dir}/experiment2
