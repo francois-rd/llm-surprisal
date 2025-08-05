@@ -8,7 +8,7 @@ from ..prompting import PromptData
 
 @dataclass
 class DummyConfig:
-    dummy_output: str = ""
+    dummy_cfg_unused: str = ""
 
 
 class DummyLLM(LLM):
