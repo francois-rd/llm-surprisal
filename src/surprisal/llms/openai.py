@@ -177,7 +177,7 @@ class OpenAIConfig:
     # remote OpenAI server requests).
     vllm_slurm_job_id: int | None = None
 
-    # The base URL ofd the local vLLM server hosting the local LLM (or None for
+    # The base URL of the local vLLM server hosting the local LLM (or None for
     # remote OpenAI server requests).
     vllm_base_url: str | None = None
 
