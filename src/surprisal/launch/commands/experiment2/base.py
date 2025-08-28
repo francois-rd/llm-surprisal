@@ -75,6 +75,7 @@ class Config:
         ]
     )
     flip_logprobs: bool = True
+    label_count: int = 5
 
     def _build_id(
         self,
@@ -98,11 +99,14 @@ class Config:
     def llm_output_dir(self, root: str) -> str:
         return str(os.path.join(root, "output", self._build_id()))
 
+    def pre_analysis_dir(self, root: str) -> str:
+        return str(os.path.join(root, "pre_analysis", self._build_id(subset=False)))
+
     def analysis_dir(self, root: str) -> str:
-        return str(os.path.join(root, "analysis", self._build_id()))
+        return str(os.path.join(root, "analysis", self._build_id(subset=False)))
 
     def plots_dir(self, root: str) -> str:
-        return str(os.path.join(root, "plots", self._build_id()))
+        return str(os.path.join(root, "plots", self._build_id(subset=False)))
 
 
 class AccordLoader:
@@ -116,14 +120,15 @@ class AccordLoader:
         self.forms_file = subset.get_reductions_file(path)
         self.csqa_file = path.accord_csqa_file
         self.instruction_prompt = cfg.user_template[subset.get_prompt_key()]
+        self.surfacer: AccordInstanceSurfacer | None = None
 
     def load(self) -> list[AccordInstance]:
-        surfacer = self._create_surfacer()
+        self.surfacer = self._create_surfacer()
         meta_datas = load_dataclass_jsonl(self.data_file, t=AccordMetaData)
         csqa = load_dataclass_jsonl(self.csqa_file, t=CsqaBase)
         csqa = {instance.identifier: instance for instance in csqa}
         return [
-            AccordInstance(surfacer(md), csqa[md.qa_id].correct_answer_label, md)
+            AccordInstance(self.surfacer(md), csqa[md.qa_id].correct_answer_label, md)
             for md in meta_datas
         ]
 
@@ -196,11 +201,14 @@ def cmd(path: PathConfig, experiment2: Config):
     print(baseline_data[1].text)
     print("Chosen label:", baseline_data[1].meta_data.label)
     print("CSQA label:", baseline_data[1].csqa_label)
+    print("Question data:", baseline_data[1].meta_data.question)
     level_1_data = AccordLoader(AccordSubset.ONE, path, experiment2).load()
     print(level_1_data[1].text)
     print("Chosen label:", level_1_data[1].meta_data.label)
     print("CSQA label:", level_1_data[1].csqa_label)
+    print("Question data:", level_1_data[1].meta_data.question)
     level_5_data = AccordLoader(AccordSubset.FIVE, path, experiment2).load()
     print(level_5_data[1].text)
     print("Chosen label:", level_5_data[1].meta_data.label)
     print("CSQA label:", level_5_data[1].csqa_label)
+    print("Question data:", level_5_data[1].meta_data.question)

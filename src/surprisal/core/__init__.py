@@ -24,6 +24,7 @@ from .linguistics import (
 )
 from .logprobs import (
     AggregatorOption,
+    AggregatorStr,
     Logprob,
     Logprobs,
     Rank,

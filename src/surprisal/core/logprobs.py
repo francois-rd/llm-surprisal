@@ -47,7 +47,7 @@ class SpacedSubsequence:
         return "".join(text)
 
     def to_chosen_logprobs(self) -> list[float]:
-        return [self.reference.sequence[index].chosen.logprob for index in self.indices]
+        return self.reference.to_chosen_logprobs(min(self.indices), max(self.indices))
 
     def verify(self, prefix_text: str | None, suffix_text: str | None) -> bool:
         if not self.indices:
@@ -74,8 +74,15 @@ class Logprobs:
     def from_dict(data: dict[str, Any]) -> "Logprobs":
         return Logprobs(sequence=[RankedLogprob.from_dict(d) for d in data["sequence"]])
 
-    def to_text(self):
-        return "".join(logprob.chosen.token for logprob in self.sequence)
+    def to_text(self, start_idx: int = 0, end_idx: int | None = None) -> str:
+        end_idx = len(self.sequence) if end_idx is None else end_idx + 1
+        return "".join(self.sequence[i].chosen.token for i in range(start_idx, end_idx))
+
+    def to_chosen_logprobs(
+        self, start_idx: int = 0, end_idx: int | None = None
+    ) -> list[float]:
+        end_idx = len(self.sequence) if end_idx is None else end_idx + 1
+        return [self.sequence[i].chosen.logprob for i in range(start_idx, end_idx)]
 
     def indices_of(
         self, text: str, start_idx: int = 0, end_idx: int | None = None
@@ -107,6 +114,9 @@ class Logprobs:
         if match is None:
             return None
         return match.group(1)
+
+
+AggregatorStr = str
 
 
 class AggregatorOption(Enum):

@@ -188,6 +188,10 @@ class AccordInstanceSurfacer(AccordSurfacer):
     ):
         super().__init__(prefix)
         self.surfacer_separator = surfacer_separator
+        self.prefix_surfacer = prefix_surfacer
+        self.ordering_surfacer = ordering_surfacer
+        self.qa_data_surfacer = qa_data_surfacer
+        self.suffix_surfacer = suffix_surfacer
         self.surfacers = [
             prefix_surfacer,
             ordering_surfacer,

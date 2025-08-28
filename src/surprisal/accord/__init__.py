@@ -14,6 +14,13 @@ from .base import (
     CsqaID,
     CsqaBase,
 )
+from .metric import (
+    AccordMetrics,
+    MetricID,
+    MetricType,
+    MetricSubType,
+    MetricSubSubType,
+)
 from .surfacer import (
     AccordInstanceSurfacer,
     AccordOrderingSurfacer,

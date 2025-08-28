@@ -42,6 +42,8 @@ exp.1.count.errors
 exp.1.analysis
 exp.2.make.prompts
 exp.2.count.errors
+exp.2.pre.analysis
+exp.2.analysis
 exp.2.test.accord.loader
 test.launch
 test.linguistic.features
