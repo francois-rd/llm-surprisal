@@ -55,23 +55,6 @@ class DataLoader:
     def load(self, inference_path: str, llm: Nickname) -> None:
         self.data, self.logger = {}, None
         for inference in load_dataclass_jsonl(inference_path, t=Inference):
-            # TODO: When it comes time for exp 2, we need to differentiate between the
-            #  logprobs of the answer choices as they first appear and are given to
-            #  the LLM and the logprob of the eventual teacher-forced answer.
-            #  -> We need a way to extract the RIGHT:
-            #     a. logprobs of answer label, for all answer labels in one inference
-            #     b. logprobs of answer choice value, for all answer choice values in one inference
-            #     c. logprobs of teacher-forced output answer label, for all answer labels over MULTIPLE inferences
-            #         -> IDEA: Make sure the structure of the ACCORD prompt has ANSWER
-            #            CHOICES (options) vs ANSWER (label). Find the index of ANSWER
-            #            CHOICES. Next, find the index of ANSWER *after* that. Now,
-            #            implement an 'end_idx' in Logprobs.indices_of(). Look for
-            #            choices *in between* ANSWER CHOICES and ANSWER. Look for label
-            #            *after* ANSWER. Works as long as 'answer' isn't in the MCQ, or
-            #            it does if we look for 'ANSWER:' and it is case sensitive.
-            #         -> HOWEVER: When/if we have a few-shot prompt, we have have
-            #            several ANSWER CHOICES and ANSWER, so we need to employ a
-            #            smart self.indicator to overcome that.
             if inference.error_message is not None:
                 continue
             for logprob_type in LogprobType:
