@@ -4,6 +4,7 @@ dacite>=1.8.1
 kaleido>=1.0.0
 langchain~=0.3.7
 openai>=1.79.0
+numpy~=2.26
 pandas>=2.2.3
 plotly>=6.1.2
 plotly-express>=0.4.1
