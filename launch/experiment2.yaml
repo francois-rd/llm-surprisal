@@ -26,7 +26,10 @@ user_template:
 user_template_indicator: Do not output anything else
 analysis_llms: []
 aggregators:
-- FIRST
 - SUM
+- MEAN
 - MIN
 flip_logprobs: true
+label_count: 5
+p_value_threshold: 0.05
+min_subsets_passing_threshold: 4

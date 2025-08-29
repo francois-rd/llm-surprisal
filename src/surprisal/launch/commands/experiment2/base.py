@@ -77,6 +77,13 @@ class Config:
     flip_logprobs: bool = True
     label_count: int = 5
 
+    # Together, these two determine how many of the subsets for a given metric all
+    # have to have a p-value below this threshold for it to be considered a strong
+    # result across the board. Because of p-hacking, it is best to set this quite
+    # low (much less than 0.05). To ignore, either set threshold == 1 or min == 0.
+    p_value_threshold: float = 0.001
+    min_subsets_passing_threshold: int = 4
+
     def _build_id(
         self,
         subset: bool = True,

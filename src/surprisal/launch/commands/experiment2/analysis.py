@@ -87,6 +87,14 @@ from .base import AccordSubset, Config
 from .pre_analysis import LogprobDataclass
 
 
+def metric_as_string(metric_id: MetricID, add_agg: bool = False) -> str:
+    if metric_id.metric.uses_aggregator() and add_agg:
+        sub_title = f"_{metric_id.agg.value.title()}"
+    else:
+        sub_title = ""
+    return f"{AccordMetrics.as_attribute_name(metric_id)}{sub_title}"
+
+
 class DataLoader:
     def __init__(self, path: PathConfig, experiment2: Config):
         self.path, self.cfg = path, experiment2
@@ -203,6 +211,11 @@ class HistogramMaker:
             df = self.data.make_df(llm, metric_id)
             self._do_make(df, llm, metric_id)
 
+    def make_select(self, llm: Nickname, selection: list[MetricID]) -> None:
+        for metric_id in selection:
+            df = self.data.make_df(llm, metric_id)
+            self._do_make(df, llm, metric_id)
+
     def _do_make(self, df: pd.DataFrame, llm: Nickname, metric_id: MetricID) -> None:
         fig = px.histogram(
             data_frame=df,
@@ -226,9 +239,8 @@ class HistogramMaker:
 
         if metric_id.metric.uses_aggregator():
             sub_label = f": {metric_id.agg.value.lower()}(logprobs)"
-            sub_title = f"_{metric_id.agg.value.title()}"
         else:
-            sub_label = sub_title = ""
+            sub_label = ""
 
         post_process_faceted_plot(
             fig,
@@ -236,8 +248,7 @@ class HistogramMaker:
             y_label="Histogram (%)",
         )
         plot_path = make_plot_path(self.plots_dir, "histogram", llm, "Factuality")
-        metric_name = AccordMetrics.as_attribute_name(metric_id)
-        save_figure(fig, plot_path, f"{metric_name}{sub_title}")
+        save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
 
 
 class TTest:
@@ -245,6 +256,8 @@ class TTest:
         self,
         data: DataLoader,
         analysis_dir: str,
+        p_value_threshold: float,
+        min_subsets_passing_threshold: int,
         binary_column_name: str,
         binary_options: tuple[str, str],
         test_type: str,  # Options are: {'independent', 'relative'}
@@ -252,6 +265,8 @@ class TTest:
     ):
         self.data = data
         self.analysis_dir = analysis_dir
+        self.threshold = p_value_threshold
+        self.min_count = min_subsets_passing_threshold
         self.binary = binary_column_name
         self.options = binary_options
         if test_type == "independent":
@@ -266,24 +281,27 @@ class TTest:
             raise ValueError(f"Unsupported t-test type: {test_type}")
         self.results = None
 
-    def run(self, llm: Nickname, aggregators: list[AggregatorOption]) -> None:
-        self.results = {}
+    def run(self, llm: Nickname, aggregators: list[AggregatorOption]) -> list[MetricID]:
+        self.results, good_p_values = {}, []
         for metric_id in MetricID.yield_all(aggregators):
-            self._do_run(llm, metric_id)
+            if self._do_run(llm, metric_id):
+                good_p_values.append(metric_id)
         file_path = os.path.join(self.analysis_dir, self.binary, llm + ".csv")
         pd.DataFrame(self.results).to_csv(ensure_path(file_path), index=False)
         self.results = None
+        return good_p_values
 
-    def _do_run(self, llm: Nickname, metric_id: MetricID) -> None:
-        if metric_id.metric.uses_aggregator():
-            sub_title = f"_{metric_id.agg.value.title()}"
-        else:
-            sub_title = ""
-        metric_name = f"{AccordMetrics.as_attribute_name(metric_id)}{sub_title}"
+    def _do_run(self, llm: Nickname, metric_id: MetricID) -> bool:
+        metric_name = metric_as_string(metric_id, add_agg=True)
         self.results.setdefault("Metric", []).append(metric_name)
         df = self.data.make_df(llm, metric_id)
+        count = 0
         for subset, group_df in df.groupby(by="Subset"):
-            self.results.setdefault(subset, []).append(self._run_test(group_df))
+            p_value = self._run_test(group_df)
+            if 0 < p_value < self.threshold:
+                count += 1
+            self.results.setdefault(subset, []).append(p_value)
+        return count >= self.min_count
 
     def _run_test(self, df: pd.DataFrame) -> float:
         split_data = {}
@@ -297,7 +315,7 @@ class TTest:
             if option not in split_data:
                 # This means we are missing data for one or both binary options.
                 # Can happen if, for example, the LLM outputted FALSE for all
-                # prompts (known to be the case for AtLocation + First in POS).
+                # prompts (which is definitely true for the BASELINE subset).
                 return -1
         result = self.test(
             a=split_data[self.options[0]],
@@ -326,6 +344,8 @@ class FactualityAnalyzer(Analyzer):
         self.t_tests = TTest(
             data=data,
             analysis_dir=self.analysis_dir,
+            p_value_threshold=self.cfg.p_value_threshold,
+            min_subsets_passing_threshold=self.cfg.min_subsets_passing_threshold,
             binary_column_name="Factuality",
             binary_options=("Factual", "Anti-Factual"),
             test_type="relative",
@@ -333,10 +353,10 @@ class FactualityAnalyzer(Analyzer):
         )
 
     def run(self, nickname: Nickname):
-        self.print("        Plotting histograms...")
-        # self.histograms.make(nickname, self.cfg.aggregators)
         self.print("        Running t-tests...")
-        self.t_tests.run(nickname, self.cfg.aggregators)
+        selection = self.t_tests.run(nickname, self.cfg.aggregators)
+        self.print("        Plotting select histograms...")
+        self.histograms.make_select(nickname, selection)
         self.print("        Done.")
 
 
