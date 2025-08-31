@@ -16,10 +16,19 @@ from .base import (
 )
 from .metric import (
     AccordMetrics,
+    AllType,
     MetricID,
     MetricType,
     MetricSubType,
     MetricSubSubType,
+    EntropySubType,
+    MassSubType,
+    PositionSubType,
+    PositionSubSubType,
+    RankSubType,
+    RankSubSubType,
+    SurprisalSubType,
+    SurprisalSubSubType,
 )
 from .surfacer import (
     AccordInstanceSurfacer,

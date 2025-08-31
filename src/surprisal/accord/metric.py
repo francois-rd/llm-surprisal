@@ -17,17 +17,17 @@ class AllType(MetricSubSubType):
     ALL = "ALL"
 
 
-class RankSubType(MetricSubSubType):
+class RankSubSubType(MetricSubSubType):
     MATCHING_ACCORD = "MATCHING_ACCORD"
     MATCHING_CSQA = "MATCHING_CSQA"
 
 
-class PositionSubType(MetricSubSubType):
+class PositionSubSubType(MetricSubSubType):
     ACCORD = "ACCORD"
     CSQA = "CSQA"
 
 
-class SurprisalSubType(MetricSubSubType):
+class SurprisalSubSubType(MetricSubSubType):
     MATCHING_ACCORD = "MATCHING_ACCORD"
     MATCHING_CSQA = "MATCHING_CSQA"
     NOT_MATCHING_ACCORD = "NOT_MATCHING_ACCORD"
@@ -40,7 +40,7 @@ class MetricSubType(Enum):
         raise NotImplementedError
 
 
-class SurprisalType(MetricSubType):
+class SurprisalSubType(MetricSubType):
     SOURCE = "SOURCE"
     TARGET = "TARGET"
     STATEMENT = "STATEMENT"
@@ -51,59 +51,59 @@ class SurprisalType(MetricSubType):
     CHOICE = "CHOICE"
 
     def get_subtype(self) -> type[Enum]:
-        st = SurprisalType
+        st = SurprisalSubType
         if self in [st.SOURCE, st.TARGET, st.STATEMENT, st.QUESTION, st.INSTANCE]:
             return AllType
         elif self in [st.FORCED, st.LABEL, st.CHOICE]:
-            return SurprisalSubType
+            return SurprisalSubSubType
         else:
             raise ValueError(f"Unsupported surprisal type: {self}")
 
 
-class RankType(MetricSubType):
+class RankSubType(MetricSubType):
     FORCED = "FORCED"
     LABEL = "LABEL"
     CHOICE = "CHOICE"
 
-    def get_subtype(self) -> type[RankSubType]:
-        if self in [RankType.FORCED, RankType.LABEL, RankType.CHOICE]:
-            return RankSubType
+    def get_subtype(self) -> type[RankSubSubType]:
+        if self in [RankSubType.FORCED, RankSubType.LABEL, RankSubType.CHOICE]:
+            return RankSubSubType
         else:
-            raise ValueError(f"Unsupported rank type: {self}")
+            raise ValueError(f"Unsupported rank sub type: {self}")
 
 
-class PositionType(MetricSubType):
+class PositionSubType(MetricSubType):
     OF = "OF"
 
-    def get_subtype(self) -> type[PositionSubType]:
-        if self == PositionType.OF:
-            return PositionSubType
+    def get_subtype(self) -> type[PositionSubSubType]:
+        if self == PositionSubType.OF:
+            return PositionSubSubType
         else:
-            raise ValueError(f"Unsupported position type: {self}")
+            raise ValueError(f"Unsupported position sub type: {self}")
 
 
-class EntropyType(MetricSubType):
+class EntropySubType(MetricSubType):
     FORCED = "FORCED"
     LABEL = "LABEL"
     CHOICE = "CHOICE"
 
     def get_subtype(self) -> type[AllType]:
-        if self in [EntropyType.FORCED, EntropyType.LABEL, EntropyType.CHOICE]:
+        if self in [EntropySubType.FORCED, EntropySubType.LABEL, EntropySubType.CHOICE]:
             return AllType
         else:
-            raise ValueError(f"Unsupported entropy type: {self}")
+            raise ValueError(f"Unsupported entropy sub type: {self}")
 
 
-class MassType(MetricSubType):
+class MassSubType(MetricSubType):
     FORCED = "FORCED"
     LABEL = "LABEL"
     CHOICE = "CHOICE"
 
     def get_subtype(self) -> type[AllType]:
-        if self in [MassType.FORCED, MassType.LABEL, MassType.CHOICE]:
+        if self in [MassSubType.FORCED, MassSubType.LABEL, MassSubType.CHOICE]:
             return AllType
         else:
-            raise ValueError(f"Unsupported entropy type: {self}")
+            raise ValueError(f"Unsupported mass sub type: {self}")
 
 
 class MetricType(Enum):
@@ -115,15 +115,15 @@ class MetricType(Enum):
 
     def get_subtype(self) -> type[MetricSubType]:
         if self == MetricType.SURPRISAL:
-            return SurprisalType
+            return SurprisalSubType
         elif self == MetricType.RANK:
-            return RankType
+            return RankSubType
         elif self == MetricType.POSITION:
-            return PositionType
+            return PositionSubType
         elif self == MetricType.ENTROPY:
-            return EntropyType
+            return EntropySubType
         elif self == MetricType.MASS:
-            return MassType
+            return MassSubType
         else:
             raise ValueError(f"Unsupported metric type: {self}")
 
