@@ -1,37 +1,7 @@
 # TODO:
-#  Either include tree size 0 (baseline) as a first facet, or else normalize
-#        every other facet by subtracting baseline (somehow... since each baseline
-#        attaches to multiple different non-baseline instances).
-
-
-# TODO: We need to implement multiple label simplification methods (for both true labels
-#     (A-E) as well as the answer choice text):
-#     a. Binarize (metric: surprisal):
-#        a.1 LLM is correct/incorrect (llm.output.label == meta_data.chosen_label)
-#            - Analogous to the False_overall_Min cross-plots of exp1 by instead of FALSE
-#              or TRUE, you plot surprisal of CORRECT in one and INCORRECT in the other.
-#            - Possibly double-colored by (b).. or we could 'mark' by the label letter?
-#        a.2 CSQA-base label (factual label) vs aggregation (sum/mean/min) over all 4
-#            other labels... alternatively, chosen label (accord label) vs aggregation
-#            of the others, then further colored/marked by F/AF of the chosen label..oh wait, we are already doing that!
-#             - Logic for both is that there may be a trend between surprisal (F or AF)
-#               in the statements and the mean/sum surprisal level of all answers (see
-#               (e) below for that exact idea). Here, we are seeing if there is a slight
-#               differentiation where surprisal goes up for ALL options EXCEPT either
-#               the CSQA-base answer or the chosen answer.
-
-# Histogram:
-# QUESTION: Is there anything besides factuality that makes sense as a colour?
-#  - LLM correctness? But how to represent when we have 1 correct and 4 incorrect?
-
-# TODO: Scatter plot:
-#  First, you can scatter any 2 metrics from the histograms against each other
-#  - but to make the number of plots tractable, only do this when at least one metric
-#    has a strong t-test outcomes
-#  Second, you can scatter any of those same metrics against a new one:
-#   - aggregate (for matching aggregator metric) over all forced labels, all answer labels, all answer choices
-#     EXCEPT either the correct one (accord label) or the base one (csqa label)
-#   - actually, is there any reason this cannot simply be another histogram metric????
+#  - DONE include tree size 0 (baseline) as a first facet
+#  - or else normalize every other facet by subtracting baseline (somehow... since
+#    each baseline attaches to multiple different non-baseline instances).
 import warnings
 import os
 
@@ -42,9 +12,19 @@ import pandas as pd
 import plotly.express as px
 
 from ....core import AggregatorOption
-from ....accord import AccordMetrics, MetricID, MetricType, RankSubType, RankSubSubType
 from ....io import ConditionalPrinter, PathConfig, load_dataclass_jsonl, ensure_path
 from ....llms import Nickname
+from ....accord import (
+    AccordMetrics,
+    MetricID,
+    MetricType,
+    AllType,
+    EntropySubType,
+    RankSubType,
+    RankSubSubType,
+    SurprisalSubType,
+    SurprisalSubSubType,
+)
 
 from .base import AccordSubset, Config
 from .pre_analysis import LogprobDataclass
@@ -108,7 +88,9 @@ class DataLoader:
         llm_data.setdefault("Subset", []).append(data.subset.value)
         llm_data.setdefault("DataID", []).append(self.id_counter)
 
-    def make_df(self, llm: Nickname, metric_id: MetricID) -> pd.DataFrame:
+    def make_df(
+        self, llm: Nickname, metric_id_1: MetricID, metric_id_2: MetricID | None = None
+    ) -> pd.DataFrame:
         df = pd.DataFrame(self.data_by_llm[llm.replace("/", "-")])
 
         # Correctness could definitely be moved to pre_analysis, but it doesn't take
@@ -119,14 +101,19 @@ class DataLoader:
             metric=MetricType.RANK,
             sub_metric=RankSubType.FORCED,
             sub_sub_metric=RankSubSubType.MATCHING_ACCORD,
-            agg=metric_id.agg,
+            agg=metric_id_1.agg,
         )
         df["Correctness"] = df["DataID"].apply(
             lambda id_: str(self.data_by_id[id_].metrics.get(correct_id) == 1)
         )
-        df["Metric"] = df["DataID"].apply(
-            lambda id_: self.data_by_id[id_].metrics.get(metric_id)
+        col_name = "Metric" if metric_id_2 is None else "Metric1"
+        df[col_name] = df["DataID"].apply(
+            lambda id_: self.data_by_id[id_].metrics.get(metric_id_1)
         )
+        if metric_id_2 is not None:
+            df["Metric2"] = df["DataID"].apply(
+                lambda id_: self.data_by_id[id_].metrics.get(metric_id_2)
+            )
         return df
 
 
@@ -343,6 +330,77 @@ class ViolinMaker:
         save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
 
 
+class ScatterplotMaker:
+    def __init__(self, plots_dir: str, data: DataLoader):
+        self.plots_dir = plots_dir
+        self.data = data
+
+    def make(
+        self, llm: Nickname, selection_pairs: list[tuple[MetricID, MetricID]]
+    ) -> None:
+        colors = ["Factuality", "Correctness", "Legend"]
+        for pair in selection_pairs:
+            df = self.data.make_df(llm, pair[0], pair[1])
+            df["Legend"] = df.apply(
+                lambda x: x["Factuality"] + ", " + x["Correctness"], axis=1
+            )
+            for color in colors:
+                self._do_make(df, pair[0], pair[1], llm, color)
+
+    def _do_make(
+        self,
+        df: pd.DataFrame,
+        metric_id_x: MetricID,
+        metric_id_y: MetricID,
+        llm: Nickname,
+        color: str,
+    ) -> None:
+        fig = px.scatter(
+            data_frame=df,
+            x=f"Metric1",
+            y=f"Metric2",
+            color=color,
+            facet_col="Subset",
+            facet_col_wrap=3,
+            facet_row_spacing=0.17,  # default is 0.07
+            facet_col_spacing=0.03,  # default is 0.03
+            category_orders={
+                "Subset": [subset.value for subset in AccordSubset],
+                "Correctness": ["True", "False"],
+                "Factuality": ["Factual", "Anti-Factual"],
+                "Legend": [
+                    "Factual, True",
+                    "Anti-Factual, True",
+                    "Factual, False",
+                    "Anti-Factual, False",
+                ],
+            },
+            template="simple_white",
+            width=700,  # default is 700
+            height=500,  # default is 500
+            # range_x and range_y might need updating for a camera ready version.
+        )
+
+        if metric_id_x.metric.uses_aggregator():
+            sub_label_x = f": {metric_id_x.agg.value.lower()}(logprobs)"
+        else:
+            sub_label_x = ""
+        if metric_id_y.metric.uses_aggregator():
+            sub_label_y = f": {metric_id_y.agg.value.lower()}(logprobs)"
+        else:
+            sub_label_y = ""
+        post_process_faceted_plot(
+            fig,
+            x_label=f"{metric_id_x.metric.value.title()}{sub_label_x}",
+            y_label=f"{metric_id_y.metric.value.title()}{sub_label_y}",
+        )
+        fig.update_traces(marker=dict(opacity=0.25))
+        plot_path = make_plot_path(self.plots_dir, "scatterplot", llm, color)
+        metric_x_name = metric_as_string(metric_id_x, add_agg=True)
+        metric_y_name = metric_as_string(metric_id_y, add_agg=True)
+        save_figure(fig, plot_path, f"{metric_x_name}_{metric_y_name}")
+
+
 class TTest:
     def __init__(
         self,
@@ -513,6 +571,83 @@ class CorrectnessAnalyzer(Analyzer):
         self.print("        Done.")
 
 
+# Scatter plot y-options:
+#  surprisal_source_all  => probably less likely than target, right?
+#  surprisal_target_all
+#  surprisal_statement_all
+#  surprisal_question_all => most important for exp3
+#  surprisal_instance_all => most important for exp3
+#  ... as well as anything with label/choice for both CSQA/ACCORD (of which there are A LOT!)
+#   => however, we can argue that if statement and question are both no good but instance
+#      is good, then that implies either label/choice/both was the important element.
+#      (Of course, if instance is good while statement/question is good, can't tell what the source is).
+
+# Scatter plot x-options:
+#  surprisal_forced_matching_accord
+#  surprisal_forced_matching_csqa  => not relevant for exp3
+#  surprisal_forced_not_matching_accord
+#  surprisal_forced_not_matching_csqa  => not relevant for exp3
+#  surprisal_forced_all
+#  rank_forced_matching_accord  => non-continuous and makes for a poor plot
+#  rank_forced_matching_csqa  => not relevant for exp3
+#  entropy_forced_all
+#  mass_forced_all  => annoying because it's not "real" mass
+
+# NOTE: Almost all of these options are PER AGGREGATOR, so even MORE in total.
+#       -> unless we only do MIN!
+#  AND on top of that we are repeating these options along 3 colors: Factuality, Correctness, and Both.
+
+
+# Assuming quite cutthroat, we have 4 y-axis * 4 x-axis * 1 aggregator * 3 colors = 48 plots/llm
+class CrossAnalyzer(Analyzer):
+    def __init__(self, path: PathConfig, cfg: Config, data: DataLoader):
+        super().__init__(path, cfg)
+        self.scatter_plots = ScatterplotMaker(self.plots_dir, data)
+        self.selection_pairs = self._generate_selection_pairs()
+
+    def _generate_selection_pairs(self) -> list[tuple[MetricID, MetricID]]:
+        selection_pairs = []
+        for agg in self.cfg.aggregators:
+            for x in self._generate_x_selection(agg):
+                for y in self._generate_y_selection(agg):
+                    selection_pairs.append((x, y))
+        return selection_pairs
+
+    @staticmethod
+    def _generate_x_selection(agg: AggregatorOption):
+        for surprisal_sub_sub in SurprisalSubSubType:
+            if "csqa" in surprisal_sub_sub.value.lower():
+                continue
+            yield MetricID(
+                metric=MetricType.SURPRISAL,
+                sub_metric=SurprisalSubType.FORCED,
+                sub_sub_metric=surprisal_sub_sub,
+                agg=agg,
+            )
+        yield MetricID(
+            metric=MetricType.ENTROPY,
+            sub_metric=EntropySubType.FORCED,
+            sub_sub_metric=AllType.ALL,
+            agg=agg,
+        )
+
+    @staticmethod
+    def _generate_y_selection(agg: AggregatorOption):
+        sst = SurprisalSubType
+        for surprisal_sub in [sst.TARGET, sst.STATEMENT, sst.QUESTION, sst.INSTANCE]:
+            yield MetricID(
+                metric=MetricType.SURPRISAL,
+                sub_metric=surprisal_sub,
+                sub_sub_metric=AllType.ALL,
+                agg=agg,
+            )
+
+    def run(self, nickname: Nickname):
+        self.print("        Plotting select scatter plots...")
+        self.scatter_plots.make(nickname, self.selection_pairs)
+        self.print("        Done.")
+
+
 @command(name="exp.2.analysis")
 class Experiment2Analysis:
     def __init__(self, path: PathConfig, experiment2: Config):
@@ -532,4 +667,4 @@ class Experiment2Analysis:
             self.print("    Running correctness analysis...")
             CorrectnessAnalyzer(self.path, self.cfg, self.data).run(nickname)
             self.print("    Running cross analysis...")
-            # CrossAnalyzer(self.path, self.cfg, self.data).run(nickname)
+            CrossAnalyzer(self.path, self.cfg, self.data).run(nickname)
