@@ -156,6 +156,9 @@ class MetricID:
                         yield MetricID(metric, sub_metric, sub_sub_metric, None)
 
 
+# TODO: Logic for all the 'not matching' is that there may be a trend where a metric
+#  (either F or AF) has a slight differentiation where the metric gets worse for ALL
+#  options EXCEPT either the CSQA answer or the ACCORD answer, where it gets better.
 @dataclass
 class AccordMetrics:
     surprisal_source_all: dict[AggregatorStr, float | None]
