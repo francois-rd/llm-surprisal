@@ -358,6 +358,7 @@ class TTest:
             self.test_kwargs = dict(nan_policy="raise", alternative=test_alternative)
         else:
             raise ValueError(f"Unsupported t-test type: {test_type}")
+        self.outliers_from_diff = test_type == "relative"
         self.results = None
 
     def run(self, llm: Nickname, aggregators: list[AggregatorOption]) -> list[MetricID]:
@@ -386,8 +387,12 @@ class TTest:
         if self.outliers <= 0:
             return a, b
         a, b = np.array(a), np.array(b)
-        mask = compute_outlier_mask(a - b, self.outliers)
-        return a[mask].tolist(), b[mask].tolist()
+        if self.outliers_from_diff:
+            a_mask = b_mask = compute_outlier_mask(a - b, self.outliers)
+        else:
+            a_mask = compute_outlier_mask(a, self.outliers)
+            b_mask = compute_outlier_mask(b, self.outliers)
+        return a[a_mask].tolist(), b[b_mask].tolist()
 
     def _run_test(self, df: pd.DataFrame) -> float:
         split_data = {}
