@@ -84,6 +84,10 @@ class Config:
     p_value_threshold: float = 0.001
     min_subsets_passing_threshold: int = 4
 
+    # If greater than 0, removes outliers before t-tests. Closer to 0 means more
+    # aggressive cutting.
+    outlier_threshold: float = 2.0
+
     def _build_id(
         self,
         subset: bool = True,

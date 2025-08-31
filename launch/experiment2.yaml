@@ -31,5 +31,6 @@ aggregators:
 - MIN
 flip_logprobs: true
 label_count: 5
-p_value_threshold: 0.05
+p_value_threshold: 0.0001
 min_subsets_passing_threshold: 4
+outlier_threshold: 2.0

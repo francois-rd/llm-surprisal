@@ -1,22 +1,5 @@
-#  1. We need code that grabs the right targets from the right statements in logprobs.
-#     We have notes in exp1/analysis.py on that.
-#     - We also need to be able to grab the surprisal of the labels (A-E) as well as the
-#       text of the answer choices (the stuff immediately after the label).
-#  2. We need to decide on aggregation for not only the within-target multi-tokens, but
-#     also the collection of all targets:
-#      - min/max are simple
-#      - sum will be tree-size dependent
-#      - avg is macro/micro dependent
-#      - first/last don't really make sense... maybe last a little but definitely not first
-
 # TODO:
-#  3. Regardless of the aggregation in (2), but ESPECIALLY if we use SUM, the analysis
-#     should be split by tree size. This is not only because there are way more of some
-#     tree sizes than others, but also because we want to see the trend.
-#      - Since it doesn't really make sense to try to extract reasoning skills from the
-#        mixed trees, we won't do skill-wise analysis. Co-opt the skill-wise analysis
-#        from exp1 to show facets by reasoning tree size instead.
-#      - Either include tree size 0 (baseline) as a first facet, or else normalize
+#  Either include tree size 0 (baseline) as a first facet, or else normalize
 #        every other facet by subtracting baseline (somehow... since each baseline
 #        attaches to multiple different non-baseline instances).
 
@@ -36,37 +19,15 @@
 #               (e) below for that exact idea). Here, we are seeing if there is a slight
 #               differentiation where surprisal goes up for ALL options EXCEPT either
 #               the CSQA-base answer or the chosen answer.
-#     b. Physical position (metric: surprisal):
-#        - One plot for each of A-E answer choices
-#        - possibly double-colored/marked by whether correct or not as in (a)
-#     c. Rank (metric: integer 1-5):
-#        c.1. Of the CSQA-base label (the factual label)
-#        c.2. Of the chosen answer label (the accord label)
-#     d. Entropy (metric: shannon entropy):
-#        - Over all the answer choices
-#     e. Aggregate surprisal (metric: surprisal):
-#        - Over all the answer choices
-
 
 # Histogram:
-#  factuality: accord label == csqa_label or not. That is precisely what LogprobData.factuality captures
-#  the data: col1=Factuality, col2=specific aggregator's surprisal of specifically the forced label that matches the accord label, col3=subset
-#  col1=color, col3=facet, col2=x-data
-#  there is no overall, only this facet
-# Variants of col2:
-#  DONE - surprisal of the answer choice label/term that matches the accord label
-#  DONE - rank of specifically the accord label (as well as the answer choice label/term)
-#  DONE - entropy over all forced labels, all answer labels, all answer choices
-#  DONE - aggregate (for matching aggregator metric) over all forced labels, all answer labels, all answer choices
-#  DONE - surprisal of the source/target/collective statement terms
-#  DONE - physical position (A-E) of the forced/answer/choice
-# DONE: FOR ALL OF THE ABOVE THAT INVOLVE JUST LOOKING AT THE ACCORD-MATCHED LABEL, YOU CAN ALSO
-# LOOK AT THE SAME METRIC FOR THE FORCED/ANSWER/CHOICE LABEL MATCHING THE *CSQA LABEL* RATHER THAN THE ACCORD LABEL
 # QUESTION: Is there anything besides factuality that makes sense as a colour?
 #  - LLM correctness? But how to represent when we have 1 correct and 4 incorrect?
 
-# Scatter plot:
+# TODO: Scatter plot:
 #  First, you can scatter any 2 metrics from the histograms against each other
+#  - but to make the number of plots tractable, only do this when at least one metric
+#    has a strong t-test outcomes
 #  Second, you can scatter any of those same metrics against a new one:
 #   - aggregate (for matching aggregator metric) over all forced labels, all answer labels, all answer choices
 #     EXCEPT either the correct one (accord label) or the base one (csqa label)
@@ -74,6 +35,7 @@
 import os
 
 from coma import command
+import numpy as np
 from scipy.stats import ttest_rel, ttest_ind
 import pandas as pd
 import plotly.express as px
@@ -93,6 +55,28 @@ def metric_as_string(metric_id: MetricID, add_agg: bool = False) -> str:
     else:
         sub_title = ""
     return f"{AccordMetrics.as_attribute_name(metric_id)}{sub_title}"
+
+
+def factuality_diff_by_subsets(group_df):
+    af = group_df[group_df["Factuality"] == "Anti-Factual"]
+    if af.empty:  # This is the case for subset 0 (i.e., the baseline).
+        return None
+    f = group_df[group_df["Factuality"] == "Factual"]["Metric"].tolist()[0]
+    return f - af["Metric"].tolist()[0]
+
+
+def as_factuality_diff(df: pd.DataFrame) -> pd.DataFrame:
+    grouped = df.groupby(by=["GroupID", "Subset"])
+    result = grouped.apply(factuality_diff_by_subsets, include_groups=False)
+    return result.reset_index().rename(columns={0: "Diff"})
+
+
+def compute_outlier_mask(data: np.array, threshold: float) -> np.array:
+    # Credit: https://stackoverflow.com/questions/11686720/is-there-a-numpy-builtin-to-reject-outliers-from-a-list
+    d = np.abs(data - np.median(data))
+    mdev = np.median(d)
+    s = d / (mdev if mdev else 1.0)
+    return s < threshold
 
 
 class DataLoader:
@@ -129,18 +113,6 @@ class DataLoader:
             lambda id_: self.data_by_id[id_].metrics.get(metric_id)
         )
         return df
-
-    def get_query_df(self, llm: Nickname) -> pd.DataFrame:
-        # TODO: The idea is that you process each LLM one at a time. For each, you
-        #  query/manipulate the given DF to figure out which LogprobData IDs you actually
-        #  need, then retrieve those to make a secondary DF.
-        return pd.DataFrame(self.data_by_llm[llm.replace("/", "-")])
-
-    def get_data_by_id(self, ids: list[int]) -> list[LogprobDataclass]:
-        # TODO: question: should we return the LogprobData (raw) or make a secondary DF?
-        #  - Logprob raw can be directly queried for metrics (still needs implementing)
-        #  - DF is better for plotly but unknown what fields/metrics are actually needed
-        return [self.data_by_id[id_] for id_ in ids]
 
 
 def make_plot_path(plots_dir: str, main_type: str, llm: Nickname, sub_type: str) -> str:
@@ -209,14 +181,16 @@ class HistogramMaker:
     def make(self, llm: Nickname, aggregators: list[AggregatorOption]) -> None:
         for metric_id in MetricID.yield_all(aggregators):
             df = self.data.make_df(llm, metric_id)
-            self._do_make(df, llm, metric_id)
+            self._do_make_factuality(df, llm, metric_id)
+            self._do_make_diff(df, llm, metric_id)
 
     def make_select(self, llm: Nickname, selection: list[MetricID]) -> None:
         for metric_id in selection:
             df = self.data.make_df(llm, metric_id)
-            self._do_make(df, llm, metric_id)
+            self._do_make_factuality(df, llm, metric_id)
+            self._do_make_diff(df, llm, metric_id)
 
-    def _do_make(self, df: pd.DataFrame, llm: Nickname, metric_id: MetricID) -> None:
+    def _do_make_factuality(self, df: pd.DataFrame, llm: Nickname, metric_id: MetricID):
         fig = px.histogram(
             data_frame=df,
             x="Metric",
@@ -250,6 +224,109 @@ class HistogramMaker:
         plot_path = make_plot_path(self.plots_dir, "histogram", llm, "Factuality")
         save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
 
+    def _do_make_diff(self, df: pd.DataFrame, llm: Nickname, metric_id: MetricID):
+        fig = px.histogram(
+            data_frame=as_factuality_diff(df),
+            x="Diff",
+            histnorm="percent",
+            facet_col="Subset",
+            facet_col_wrap=3,
+            facet_row_spacing=0.17,  # default is 0.07
+            facet_col_spacing=0.03,  # default is 0.03
+            category_orders={"Subset": [subset.value for subset in AccordSubset]},
+            template="simple_white",
+            width=700,  # default is 700
+            height=500,  # default is 500
+            nbins=25,
+            # range_x and range_y might need updating for a camera ready version.
+        )
+
+        if metric_id.metric.uses_aggregator():
+            sub_label = f": {metric_id.agg.value.lower()}(logprobs)"
+        else:
+            sub_label = ""
+        sub_title = f"{metric_id.metric.value.title()}{sub_label}"
+
+        post_process_faceted_plot(
+            fig,
+            x_label=f"Paired difference in Factuality of {sub_title}",
+            y_label="Histogram (%)",
+        )
+        fig.update_traces(marker_color="green")
+        plot_path = make_plot_path(self.plots_dir, "histogram", llm, "Diff")
+        save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
+
+
+class ViolinMaker:
+    def __init__(self, plots_dir: str, data: DataLoader, outlier_threshold: float):
+        self.plots_dir = plots_dir
+        self.data = data
+        self.outliers = outlier_threshold
+
+    def make(self, llm: Nickname, aggregators: list[AggregatorOption]) -> None:
+        for metric_id in MetricID.yield_all(aggregators):
+            df = self._make_df(llm, metric_id)
+            self._do_make(df, llm, metric_id, reject_outliers=False)
+            self._do_make(df, llm, metric_id, reject_outliers=True)
+
+    def make_select(self, llm: Nickname, selection: list[MetricID]) -> None:
+        for metric_id in selection:
+            df = self._make_df(llm, metric_id)
+            self._do_make(df, llm, metric_id, reject_outliers=False)
+            self._do_make(df, llm, metric_id, reject_outliers=True)
+
+    def _make_df(self, llm: Nickname, metric_id: MetricID) -> pd.DataFrame:
+        df = as_factuality_diff(self.data.make_df(llm, metric_id))
+        return df[df["Subset"] != 0]
+
+    def _reject_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
+        if self.outliers <= 0:
+            return df
+        return df[compute_outlier_mask(np.array(df["Diff"]), self.outliers)]
+
+    def _do_make(
+        self,
+        df: pd.DataFrame,
+        llm: Nickname,
+        metric_id: MetricID,
+        reject_outliers: bool,
+    ):
+        fig = px.violin(
+            data_frame=self._reject_outliers(df) if reject_outliers else df,
+            y="Diff",
+            color="Subset",
+            box=True,
+            category_orders={
+                "Subset": [
+                    subset.value
+                    for subset in AccordSubset
+                    if subset != AccordSubset.BASELINE
+                ]
+            },
+            template="simple_white",
+            width=700,  # default is 700
+            height=500,  # default is 500
+            # range_x and range_y might need updating for a camera ready version.
+        )
+
+        if metric_id.metric.uses_aggregator():
+            sub_label = f": {metric_id.agg.value.lower()}(logprobs)"
+        else:
+            sub_label = ""
+        sub_title = f"{metric_id.metric.value.title()}{sub_label}"
+
+        post_process_faceted_plot(
+            fig,
+            x_label="Subset",
+            y_label=f"Paired difference in Factuality of {sub_title}",
+        )
+        fig.add_hline(y=0.0, opacity=0.5, line_width=2, line_dash="dash")
+        fig.update_traces(meanline_visible=True)
+        fig.update_xaxes(showticklabels=False)  # TODO: This isn't doing anything?
+        sub_type = "No_Outliers" if reject_outliers else "All"
+        plot_path = make_plot_path(self.plots_dir, "violin", llm, sub_type)
+        save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
+
 
 class TTest:
     def __init__(
@@ -258,6 +335,7 @@ class TTest:
         analysis_dir: str,
         p_value_threshold: float,
         min_subsets_passing_threshold: int,
+        outlier_threshold: float,
         binary_column_name: str,
         binary_options: tuple[str, str],
         test_type: str,  # Options are: {'independent', 'relative'}
@@ -267,6 +345,7 @@ class TTest:
         self.analysis_dir = analysis_dir
         self.threshold = p_value_threshold
         self.min_count = min_subsets_passing_threshold
+        self.outliers = outlier_threshold
         self.binary = binary_column_name
         self.options = binary_options
         if test_type == "independent":
@@ -303,6 +382,13 @@ class TTest:
             self.results.setdefault(subset, []).append(p_value)
         return count >= self.min_count
 
+    def _reject_outliers(self, a, b) -> tuple[list[float], list[float]]:
+        if self.outliers <= 0:
+            return a, b
+        a, b = np.array(a), np.array(b)
+        mask = compute_outlier_mask(a - b, self.outliers)
+        return a[mask].tolist(), b[mask].tolist()
+
     def _run_test(self, df: pd.DataFrame) -> float:
         split_data = {}
         for option, group_df in df.groupby(by=self.binary):
@@ -317,11 +403,11 @@ class TTest:
                 # Can happen if, for example, the LLM outputted FALSE for all
                 # prompts (which is definitely true for the BASELINE subset).
                 return -1
-        result = self.test(
+        a, b = self._reject_outliers(
             a=split_data[self.options[0]],
             b=split_data[self.options[1]],
-            **self.test_kwargs,
         )
+        result = self.test(a=a, b=b, **self.test_kwargs)
         return result.pvalue
 
 
@@ -341,11 +427,17 @@ class FactualityAnalyzer(Analyzer):
     def __init__(self, path: PathConfig, cfg: Config, data: DataLoader):
         super().__init__(path, cfg)
         self.histograms = HistogramMaker(self.plots_dir, data)
+        self.violins = ViolinMaker(
+            plots_dir=self.plots_dir,
+            data=data,
+            outlier_threshold=self.cfg.outlier_threshold,
+        )
         self.t_tests = TTest(
             data=data,
             analysis_dir=self.analysis_dir,
             p_value_threshold=self.cfg.p_value_threshold,
             min_subsets_passing_threshold=self.cfg.min_subsets_passing_threshold,
+            outlier_threshold=self.cfg.outlier_threshold,
             binary_column_name="Factuality",
             binary_options=("Factual", "Anti-Factual"),
             test_type="relative",
@@ -357,6 +449,8 @@ class FactualityAnalyzer(Analyzer):
         selection = self.t_tests.run(nickname, self.cfg.aggregators)
         self.print("        Plotting select histograms...")
         self.histograms.make_select(nickname, selection)
+        self.print("        Plotting select violins...")
+        self.violins.make_select(nickname, selection)
         self.print("        Done.")
 
 
