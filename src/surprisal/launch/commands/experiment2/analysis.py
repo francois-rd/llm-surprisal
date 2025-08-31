@@ -32,6 +32,7 @@
 #   - aggregate (for matching aggregator metric) over all forced labels, all answer labels, all answer choices
 #     EXCEPT either the correct one (accord label) or the base one (csqa label)
 #   - actually, is there any reason this cannot simply be another histogram metric????
+import warnings
 import os
 
 from coma import command
@@ -41,7 +42,7 @@ import pandas as pd
 import plotly.express as px
 
 from ....core import AggregatorOption
-from ....accord import AccordMetrics, MetricID
+from ....accord import AccordMetrics, MetricID, MetricType, RankSubType, RankSubSubType
 from ....io import ConditionalPrinter, PathConfig, load_dataclass_jsonl, ensure_path
 from ....llms import Nickname
 
@@ -109,6 +110,20 @@ class DataLoader:
 
     def make_df(self, llm: Nickname, metric_id: MetricID) -> pd.DataFrame:
         df = pd.DataFrame(self.data_by_llm[llm.replace("/", "-")])
+
+        # Correctness could definitely be moved to pre_analysis, but it doesn't take
+        # long to compute (milliseconds), so there's no real harm putting it here.
+        # Logic: The LLM is correct if the RANK of the FORCED label matching the ACCORD
+        #  label is 1 (i.e., the top ranked amongst all the forced labels).
+        correct_id = MetricID(
+            metric=MetricType.RANK,
+            sub_metric=RankSubType.FORCED,
+            sub_sub_metric=RankSubSubType.MATCHING_ACCORD,
+            agg=metric_id.agg,
+        )
+        df["Correctness"] = df["DataID"].apply(
+            lambda id_: str(self.data_by_id[id_].metrics.get(correct_id) == 1)
+        )
         df["Metric"] = df["DataID"].apply(
             lambda id_: self.data_by_id[id_].metrics.get(metric_id)
         )
@@ -405,15 +420,33 @@ class TTest:
         for option in self.options:
             if option not in split_data:
                 # This means we are missing data for one or both binary options.
-                # Can happen if, for example, the LLM outputted FALSE for all
-                # prompts (which is definitely true for the BASELINE subset).
                 return -1
         a, b = self._reject_outliers(
             a=split_data[self.options[0]],
             b=split_data[self.options[1]],
         )
-        result = self.test(a=a, b=b, **self.test_kwargs)
-        return result.pvalue
+        return self._run_with_caught_warnings(a, b)
+
+    def _run_with_caught_warnings(self, a: list[float], b: list[float]) -> float:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            try:
+                return self.test(a=a, b=b, **self.test_kwargs).pvalue
+            except RuntimeWarning as e:
+                # This is to catch:
+                #  RuntimeWarning: Precision loss occurred in moment calculation due
+                #  to catastrophic cancellation. This occurs when the data are nearly
+                #  identical. Results may be unreliable.
+                # or:
+                #  scipy.stats._axis_nan_policy.SmallSampleWarning: One or more sample
+                #  arguments is too small; all returned values will be NaN. See
+                #  documentation for sample size requirements.
+                if "Precision loss occurred in moment calculation" in str(e):
+                    return -1
+                elif "One or more sample arguments is too small" in str(e):
+                    return -1
+                else:
+                    raise
 
 
 class Analyzer:
@@ -459,6 +492,27 @@ class FactualityAnalyzer(Analyzer):
         self.print("        Done.")
 
 
+class CorrectnessAnalyzer(Analyzer):
+    def __init__(self, path: PathConfig, cfg: Config, data: DataLoader):
+        super().__init__(path, cfg)
+        self.t_tests = TTest(
+            data=data,
+            analysis_dir=self.analysis_dir,
+            p_value_threshold=self.cfg.p_value_threshold,
+            min_subsets_passing_threshold=self.cfg.min_subsets_passing_threshold,
+            outlier_threshold=self.cfg.outlier_threshold,
+            binary_column_name="Correctness",
+            binary_options=("True", "False"),
+            test_type="independent",
+            test_alternative="less" if self.cfg.flip_logprobs else "greater",
+        )
+
+    def run(self, nickname: Nickname):
+        self.print("        Running t-tests...")
+        self.t_tests.run(nickname, self.cfg.aggregators)
+        self.print("        Done.")
+
+
 @command(name="exp.2.analysis")
 class Experiment2Analysis:
     def __init__(self, path: PathConfig, experiment2: Config):
@@ -475,5 +529,7 @@ class Experiment2Analysis:
             self.print("Analyzing results of model:", nickname)
             self.print("    Running factuality analysis...")
             FactualityAnalyzer(self.path, self.cfg, self.data).run(nickname)
+            self.print("    Running correctness analysis...")
+            CorrectnessAnalyzer(self.path, self.cfg, self.data).run(nickname)
             self.print("    Running cross analysis...")
             # CrossAnalyzer(self.path, self.cfg, self.data).run(nickname)
