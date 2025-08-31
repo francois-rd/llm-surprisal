@@ -141,12 +141,12 @@ def save_figure(fig, plot_path: str, file_base_name: str) -> None:
 
 
 def post_process_faceted_plot(fig, x_label: str, y_label: str) -> None:
-    # Replace facet names: "RelationType=value" -> "<b>value</b>"
+    # Replace facet names: "Subset=value" -> "<b>subset_name</b>"
     fig.for_each_annotation(
         lambda a: a.update(
             text=(
-                f"<b>{a.text.replace(f'RelationType=', '')}</b>"
-                if "RelationType" in a.text
+                f"<b>{AccordSubset(int(a.text.replace(f'Subset=', ''))).name}</b>"
+                if "Subset" in a.text
                 else a.text
             ),
         ),
