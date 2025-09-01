@@ -10,6 +10,7 @@ import numpy as np
 from scipy.stats import ttest_rel, ttest_ind
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
 from ....core import AggregatorOption
 from ....io import ConditionalPrinter, PathConfig, load_dataclass_jsonl, ensure_path
@@ -180,12 +181,6 @@ class HistogramMaker:
         self.plots_dir = plots_dir
         self.data = data
 
-    def make(self, llm: Nickname, aggregators: list[AggregatorOption]) -> None:
-        for metric_id in MetricID.yield_all(aggregators):
-            df = self.data.make_df(llm, metric_id)
-            self._do_make_factuality(df, llm, metric_id)
-            self._do_make_diff(df, llm, metric_id)
-
     def make_select(self, llm: Nickname, selection: list[MetricID]) -> None:
         for metric_id in selection:
             df = self.data.make_df(llm, metric_id)
@@ -259,17 +254,11 @@ class HistogramMaker:
         save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
 
 
-class ViolinMaker:
+class DiffViolinMaker:
     def __init__(self, plots_dir: str, data: DataLoader, outlier_threshold: float):
         self.plots_dir = plots_dir
         self.data = data
         self.outliers = outlier_threshold
-
-    def make(self, llm: Nickname, aggregators: list[AggregatorOption]) -> None:
-        for metric_id in MetricID.yield_all(aggregators):
-            df = self._make_df(llm, metric_id)
-            self._do_make(df, llm, metric_id, reject_outliers=False)
-            self._do_make(df, llm, metric_id, reject_outliers=True)
 
     def make_select(self, llm: Nickname, selection: list[MetricID]) -> None:
         for metric_id in selection:
@@ -317,17 +306,103 @@ class ViolinMaker:
             sub_label = ""
         sub_title = f"{metric_id.metric.value.title()}{sub_label}"
 
-        post_process_faceted_plot(
-            fig,
-            x_label="Subset",
-            y_label=f"Paired difference in Factuality of {sub_title}",
+        fig.update_layout(
+            xaxis=dict(title="ACCORD Subset", showticklabels=False),
+            yaxis=dict(title=f"Paired difference in Factuality of {sub_title}"),
+            margin=dict(l=0, r=0, b=60, t=0),
         )
         fig.add_hline(y=0.0, opacity=0.5, line_width=2, line_dash="dash")
         fig.update_traces(meanline_visible=True)
         fig.update_xaxes(showticklabels=False)  # TODO: This isn't doing anything?
-        sub_type = "No_Outliers" if reject_outliers else "All"
+        sub_type = "Diff-No-Outliers" if reject_outliers else "Diff-All"
         plot_path = make_plot_path(self.plots_dir, "violin", llm, sub_type)
         save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
+
+
+class BinaryViolinMaker:
+    def __init__(
+        self,
+        plots_dir: str,
+        data: DataLoader,
+        outlier_threshold: float,
+        binary_column_name: str,
+        binary_options: tuple[str, str],
+    ):
+        self.plots_dir = plots_dir
+        self.data = data
+        self.outliers = outlier_threshold
+        self.binary = binary_column_name
+        self.options = binary_options
+
+    def make_select(self, llm: Nickname, selection: list[MetricID]) -> None:
+        for metric_id in selection:
+            df = self._make_df(llm, metric_id)
+            self._do_make(df, llm, metric_id, reject_outliers=False)
+            self._do_make(df, llm, metric_id, reject_outliers=True)
+
+    def _make_df(self, llm: Nickname, metric_id: MetricID) -> pd.DataFrame:
+        df = self.data.make_df(llm, metric_id)
+        df["Subset"] = df["Subset"].apply(lambda x: AccordSubset(x).name)
+        return df
+
+    def _reject_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
+        if self.outliers <= 0:
+            return df
+        dfs = []
+        for option in self.options:
+            data = np.array(df[df[self.binary] == option]["Metric"])
+            mask = compute_outlier_mask(data, self.outliers)
+            dfs.append(df[df[self.binary] == option][mask])
+        return pd.concat(dfs)
+
+    def _do_make(
+        self,
+        df: pd.DataFrame,
+        llm: Nickname,
+        metric_id: MetricID,
+        reject_outliers: bool,
+    ):
+        df = self._reject_outliers(df) if reject_outliers else df
+        fig = go.Figure()
+        for option in self.options:
+            self._add_trace(fig, df, option)
+
+        if metric_id.metric.uses_aggregator():
+            sub_label = f": {metric_id.agg.value.lower()}(logprobs)"
+        else:
+            sub_label = ""
+
+        fig.update_layout(
+            violingap=0,
+            violinmode="overlay",
+            xaxis=dict(
+                title="ACCORD Subset",
+                range=[
+                    min(s.value for s in AccordSubset) - 1,
+                    max(s.value for s in AccordSubset) + 1,
+                ],
+            ),
+            yaxis=dict(title=f"{metric_id.metric.value.title()}{sub_label}"),
+            margin=dict(l=0, r=0, b=60, t=0),
+            template="simple_white",  # TODO: For camera ready, correctness should not have same color as Factuality.
+            legend=dict(title=self.binary),
+        )
+        sub_type = self.binary + ("-No-Outliers" if reject_outliers else "-All")
+        plot_path = make_plot_path(self.plots_dir, "violin", llm, sub_type)
+        save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
+
+    def _add_trace(self, fig, df: pd.DataFrame, option: str) -> None:
+        fig.add_trace(
+            go.Violin(
+                x=df["Subset"][df[self.binary] == option],
+                y=df["Metric"][df[self.binary] == option],
+                box=dict(visible=True),
+                legendgroup=option,
+                scalegroup=option,
+                name=option,
+                side="positive" if option == self.options[1] else "negative",
+            )
+        )
 
 
 class ScatterplotMaker:
@@ -335,7 +410,7 @@ class ScatterplotMaker:
         self.plots_dir = plots_dir
         self.data = data
 
-    def make(
+    def make_select(
         self, llm: Nickname, selection_pairs: list[tuple[MetricID, MetricID]]
     ) -> None:
         colors = ["Factuality", "Correctness", "Legend"]
@@ -523,10 +598,17 @@ class FactualityAnalyzer(Analyzer):
     def __init__(self, path: PathConfig, cfg: Config, data: DataLoader):
         super().__init__(path, cfg)
         self.histograms = HistogramMaker(self.plots_dir, data)
-        self.violins = ViolinMaker(
+        self.diff_violins = DiffViolinMaker(
             plots_dir=self.plots_dir,
             data=data,
             outlier_threshold=self.cfg.outlier_threshold,
+        )
+        self.binary_violins = BinaryViolinMaker(
+            plots_dir=self.plots_dir,
+            data=data,
+            outlier_threshold=self.cfg.outlier_threshold,
+            binary_column_name="Factuality",
+            binary_options=("Factual", "Anti-Factual"),
         )
         self.t_tests = TTest(
             data=data,
@@ -545,14 +627,23 @@ class FactualityAnalyzer(Analyzer):
         selection = self.t_tests.run(nickname, self.cfg.aggregators)
         self.print("        Plotting select histograms...")
         self.histograms.make_select(nickname, selection)
-        self.print("        Plotting select violins...")
-        self.violins.make_select(nickname, selection)
+        self.print("        Plotting select diff violins...")
+        self.diff_violins.make_select(nickname, selection)
+        self.print("        Plotting select binary violins...")
+        self.binary_violins.make_select(nickname, selection)
         self.print("        Done.")
 
 
 class CorrectnessAnalyzer(Analyzer):
     def __init__(self, path: PathConfig, cfg: Config, data: DataLoader):
         super().__init__(path, cfg)
+        self.violins = BinaryViolinMaker(
+            plots_dir=self.plots_dir,
+            data=data,
+            outlier_threshold=self.cfg.outlier_threshold,
+            binary_column_name="Correctness",
+            binary_options=("True", "False"),
+        )
         self.t_tests = TTest(
             data=data,
             analysis_dir=self.analysis_dir,
@@ -567,7 +658,9 @@ class CorrectnessAnalyzer(Analyzer):
 
     def run(self, nickname: Nickname):
         self.print("        Running t-tests...")
-        self.t_tests.run(nickname, self.cfg.aggregators)
+        selection = self.t_tests.run(nickname, self.cfg.aggregators)
+        self.print("        Plotting select violins...")
+        self.violins.make_select(nickname, selection)
         self.print("        Done.")
 
 
@@ -644,7 +737,7 @@ class CrossAnalyzer(Analyzer):
 
     def run(self, nickname: Nickname):
         self.print("        Plotting select scatter plots...")
-        self.scatter_plots.make(nickname, self.selection_pairs)
+        self.scatter_plots.make_select(nickname, self.selection_pairs)
         self.print("        Done.")
 
 
