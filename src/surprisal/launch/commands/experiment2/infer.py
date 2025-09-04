@@ -53,7 +53,7 @@ class Experiment2Infer:
         self.print = ConditionalPrinter(self.cfg.verbose)
         out = self.cfg.llm_output_dir(self.path.experiment2_dir)
         self.out_file = os.path.join(out, f"{self.llms.llm.replace('/', '-')}.jsonl")
-        self.system_prompt = self.cfg.system_prompt[self.cfg.subset.get_prompt_key()]
+        self.system_prompt = self.cfg.get_system_prompt()
         trim_indicator = None
         if self.cfg.trim_inference_logprobs:
             trim_indicator = self.cfg.user_template_indicator

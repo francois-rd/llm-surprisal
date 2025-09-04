@@ -4,15 +4,16 @@ checkpoint_frequency: 0.1
 chosen_only_logprob: true
 trim_inference_logprobs: true
 verbose: true
+invert: true
 system_prompt_id: simple
 system_prompt:
-  baseline: >-
+  simple-baseline: >-
     You are a helpful assistant in a knowledge verification process.
-  accord: >-
+  simple: >-
     You are a helpful assistant in a reasoning task.
-user_template_id: accord
+user_template_id: inverted-accord #accord
 user_template:
-  baseline: >-
+  accord-baseline: >-
     Answer the following multiple-choice question with the label (one of: "A", "B",
     "C", "D", or "E") of the best-fit answer. Do not output anything else.
   accord: >-
@@ -20,6 +21,18 @@ user_template:
     contents of the statements may disagree with your prior knowledge of the world. That
     is ok. Your task is to provide the most appropriate answer to the multiple-choice
     question that follows based on the **reasoning presented in the statements**, even
+    if that answer disagrees with your prior knowledge. Provide your answer as the
+    label (one of: "A", "B", "C", "D", or "E") of the choice that best answers the
+    question. Do not output anything else.
+  inverted-accord-baseline: >-
+    Answer the following multiple-choice question with the label (one of: "A", "B",
+    "C", "D", or "E") of the best-fit answer. Do not output anything else.
+  inverted-accord: >-
+    Below is a multi-choice question. Before answering the question, take note of the
+    set of related logical statements that immediately follow the question. The
+    contents of the statements may disagree with your prior knowledge of the world. That
+    is ok. Your task is to provide the most appropriate answer to the multiple-choice
+    question based on the **reasoning presented in the statements**, even
     if that answer disagrees with your prior knowledge. Provide your answer as the
     label (one of: "A", "B", "C", "D", or "E") of the choice that best answers the
     question. Do not output anything else.

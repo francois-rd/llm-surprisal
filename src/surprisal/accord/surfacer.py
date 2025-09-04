@@ -179,6 +179,7 @@ class AccordInstanceSurfacer(AccordSurfacer):
 
     def __init__(
         self,
+        invert: bool,
         prefix: str,
         surfacer_separator: str,
         prefix_surfacer: AccordSurfacer | None,
@@ -187,17 +188,16 @@ class AccordInstanceSurfacer(AccordSurfacer):
         suffix_surfacer: AccordSurfacer | None,
     ):
         super().__init__(prefix)
+        self.invert = invert
         self.surfacer_separator = surfacer_separator
         self.prefix_surfacer = prefix_surfacer
         self.ordering_surfacer = ordering_surfacer
         self.qa_data_surfacer = qa_data_surfacer
         self.suffix_surfacer = suffix_surfacer
-        self.surfacers = [
-            prefix_surfacer,
-            ordering_surfacer,
-            qa_data_surfacer,
-            suffix_surfacer,
-        ]
+        two, three = ordering_surfacer, qa_data_surfacer
+        if invert:
+            two, three = three, two
+        self.surfacers = [prefix_surfacer, two, three, suffix_surfacer]
 
     def __call__(self, meta_data: AccordMetaData, *args, **kwargs) -> str:
         def fn_caller(fn):

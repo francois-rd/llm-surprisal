@@ -43,7 +43,7 @@ class _CurrentData:
     inference: Inference
     meta_data: AccordMetaData
     logprobs: Logprobs
-    statement_tag_end_idx: int | None = None
+    statement_tag_indices: tuple[int, int] | None = None
     question_indices: tuple[int, int] | None = None
     answer_tag_indices: tuple[int, int] | None = None
     logprob_of_instance: list[float] | None = None
@@ -217,7 +217,7 @@ class SubsetLoader:
                 logprobs=Logprobs.from_dict(inference.derived_data["prompt_logprobs"]),
             )
             success = (
-                self._fill_statement_tag_end_idx()
+                self._fill_statement_tag_indices()
                 and self._fill_question_indices()
                 and self._fill_answer_tag_indices()
                 and self._fill_logprob_of_instance()
@@ -256,16 +256,17 @@ class SubsetLoader:
             return None
         return spaced_sequences[0]
 
-    def _fill_statement_tag_end_idx(self) -> bool:
+    def _fill_statement_tag_indices(self) -> bool:
         if self._is_baseline():
-            self.current_data.statement_tag_end_idx = 0
+            self.current_data.statement_tag_indices = [-1, -1]
             return True
         statement_tag = self.accord_loader.surfacer.ordering_surfacer.prefix.strip()
         sequences = self.current_data.logprobs.indices_of(statement_tag)
         seq = self._get_sequence(sequences, f"Statement tag '{statement_tag}'")
         if seq is not None:
-            self.current_data.statement_tag_end_idx = max(seq.indices) + 1
-        return self.current_data.statement_tag_end_idx is not None
+            statement_tag_indices = min(seq.indices), max(seq.indices) + 1
+            self.current_data.statement_tag_indices = statement_tag_indices
+        return self.current_data.statement_tag_indices is not None
 
     def _fill_question_indices(self) -> bool:
         question = self.current_data.meta_data.question
@@ -276,9 +277,8 @@ class SubsetLoader:
         return self.current_data.question_indices is not None
 
     def _fill_answer_tag_indices(self) -> bool:
-        start_idx = self.current_data.question_indices[1]
         answer_tag = self.accord_loader.surfacer.suffix_surfacer.prefix.strip()
-        sequences = self.current_data.logprobs.indices_of(answer_tag, start_idx)
+        sequences = self.current_data.logprobs.indices_of(answer_tag)
         seq = self._get_sequence(sequences, f"Answer tag '{answer_tag}'")
         if seq is not None:
             answer_tag_indices = min(seq.indices), max(seq.indices) + 1
@@ -289,8 +289,8 @@ class SubsetLoader:
         c = self.current_data
         if not self._first_in_group():
             return True
-        start_idx = c.statement_tag_end_idx
-        if self._is_baseline():
+        start_idx = c.statement_tag_indices[1]
+        if self._is_baseline() or self.accord_loader.invert:
             start_idx = c.question_indices[0]
         end_idx = c.answer_tag_indices[0]
         c.logprob_of_instance = c.logprobs.to_chosen_logprobs(start_idx, end_idx)
@@ -318,8 +318,10 @@ class SubsetLoader:
     ) -> tuple[list[float], list[float]] | None:
         # Find the exact boundaries of this particular statement.
         text = self.statement_surfacer(self.current_data.meta_data, ordering=ordering)
-        start_idx = self.current_data.statement_tag_end_idx
+        start_idx = self.current_data.statement_tag_indices[1]
         end_idx = self.current_data.question_indices[0]
+        if self.accord_loader.invert:
+            end_idx = self.current_data.answer_tag_indices[0]
         sequences = self.current_data.logprobs.indices_of(text, start_idx, end_idx)
         seq = self._get_sequence(sequences, f"Statement '{text}'")
         if seq is None:
@@ -360,7 +362,9 @@ class SubsetLoader:
             return True
         results = {}
         start_idx = self.current_data.question_indices[1]
-        end_idx = self.current_data.answer_tag_indices[0]
+        end_idx = self.current_data.statement_tag_indices[0]
+        if self._is_baseline() or not self.accord_loader.invert:
+            end_idx = self.current_data.answer_tag_indices[0]
         for label, term in self.current_data.meta_data.answer_choices.items():
             label_ss = self.current_data.logprobs.indices_of(label, start_idx, end_idx)
             label_s = self._get_sequence(label_ss, f"Label '{label}'")

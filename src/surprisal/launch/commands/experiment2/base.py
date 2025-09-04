@@ -49,8 +49,8 @@ class AccordSubset(Enum):
     def get_reductions_file(self, path: PathConfig) -> str | None:
         return None if self == AccordSubset.BASELINE else path.accord_reductions_file
 
-    def get_prompt_key(self) -> str:
-        return "baseline" if self == AccordSubset.BASELINE else "accord"
+    def get_prompt_key(self, base_id: str) -> str:
+        return base_id + ("-baseline" if self == AccordSubset.BASELINE else "")
 
 
 @dataclass
@@ -61,6 +61,7 @@ class Config:
     chosen_only_logprob: bool = True
     trim_inference_logprobs: bool = True
     verbose: bool = False
+    invert: bool = False  # Whether to invert the order of statements vs question/answer
     system_prompt_id: str = ""
     system_prompt: dict[str, str] = field(default_factory=dict)
     user_template_id: str = ""
@@ -87,6 +88,14 @@ class Config:
     # If greater than 0, removes outliers before t-tests. Closer to 0 means more
     # aggressive cutting.
     outlier_threshold: float = 2.0
+
+    def get_system_prompt(self, subset: AccordSubset | None = None) -> str:
+        subset = subset or self.subset
+        return self.system_prompt[subset.get_prompt_key(self.system_prompt_id)]
+
+    def get_user_template(self, subset: AccordSubset | None = None) -> str:
+        subset = subset or self.subset
+        return self.user_template[subset.get_prompt_key(self.user_template_id)]
 
     def _build_id(
         self,
@@ -130,7 +139,8 @@ class AccordLoader:
         self.data_file = subset.get_meta_data_file(path)
         self.forms_file = subset.get_reductions_file(path)
         self.csqa_file = path.accord_csqa_file
-        self.instruction_prompt = cfg.user_template[subset.get_prompt_key()]
+        self.instruction_prompt = cfg.get_user_template(subset)
+        self.invert = cfg.invert
         self.surfacer: AccordInstanceSurfacer | None = None
 
     def load(self) -> list[AccordInstance]:
@@ -189,6 +199,7 @@ class AccordLoader:
                 ),
             )
         return AccordInstanceSurfacer(
+            invert=self.invert,
             prefix="",
             surfacer_separator="\n",
             prefix_surfacer=AccordTextSurfacer(
