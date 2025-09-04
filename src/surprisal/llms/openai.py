@@ -40,10 +40,7 @@ class MakeOpenAILogprobs:
             raise ValueError(f"Unsupported raw format for logprobs: {raw_format}")
 
     def _maybe_trim(self, logprobs: Logprobs) -> Logprobs:
-        if self.indicator:
-            sequences = list(logprobs.indices_of(self.indicator))
-            start_idx = min(sequences[0].indices) if len(sequences) == 1 else 0
-            return Logprobs(sequence=logprobs.sequence[start_idx:])
+        logprobs.maybe_trim(self.indicator)
         return logprobs
 
     def _from_vllm(self, raw_logprobs) -> Logprobs:

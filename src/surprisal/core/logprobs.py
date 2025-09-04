@@ -74,6 +74,12 @@ class Logprobs:
     def from_dict(data: dict[str, Any]) -> "Logprobs":
         return Logprobs(sequence=[RankedLogprob.from_dict(d) for d in data["sequence"]])
 
+    def maybe_trim(self, trim_indicator: str | None) -> None:
+        if trim_indicator is not None:
+            sequences = list(self.indices_of(trim_indicator))
+            start_idx = min(sequences[0].indices) if len(sequences) == 1 else 0
+            self.sequence = self.sequence[start_idx:]
+
     def to_text(self, start_idx: int = 0, end_idx: int | None = None) -> str:
         end_idx = len(self.sequence) if end_idx is None else end_idx + 1
         return "".join(self.sequence[i].chosen.token for i in range(start_idx, end_idx))
