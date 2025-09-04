@@ -21,7 +21,6 @@ from ....accord import (
     MetricType,
     AllType,
     AnswerType,
-    EntropySubType,
     RankSubType,
     RankSubSubType,
     SurprisalSubType,
@@ -671,7 +670,8 @@ class CorrectnessAnalyzer(Analyzer):
 #  surprisal_statement_all
 #  surprisal_question_all => most important for exp3
 #  surprisal_instance_all => most important for exp3
-#  ... as well as anything with label/choice for both CSQA/ACCORD (of which there are A LOT!)
+#  surprisal_choice_matching_accord  => empirically, this is best from t-tests
+#  ... as well as all others with label/choice for both CSQA/ACCORD (of which there are A LOT!)
 #   => however, we can argue that if statement and question are both no good but instance
 #      is good, then that implies either label/choice/both was the important element.
 #      (Of course, if instance is good while statement/question is good, can't tell what the source is).
@@ -685,31 +685,36 @@ class CorrectnessAnalyzer(Analyzer):
 #  surprisal_llm_answer
 #  rank_forced_matching_accord  => non-continuous and makes for a poor plot
 #  rank_forced_matching_csqa  => not relevant for exp3
-#  entropy_forced_all
+#  entropy_forced_all  => interesting in theory, but empirically bad results
 #  mass_forced_all  => annoying because it's not "real" mass
 
 # NOTE: Almost all of these options are PER AGGREGATOR, so even MORE in total.
-#       -> unless we only do MIN!
+#       -> to minimize, we only do SUM (for short text spans, min ~ sum, and for
+#          long text spans, SUM has empirically best t-tests)
+#          -> logic is that SUM is 'cumulative' surprisal => indicative of global issue
+#          -> whereas MIN is 'shock' surprisal (in any long enough text, at least one
+#             token will be surprising)
+
 #  AND on top of that we are repeating these options along 3 colors: Factuality, Correctness, and Both.
 
 
-# Assuming quite cutthroat, we have 4 y-axis * 5 x-axis * 1 aggregator * 3 colors = 60 plots/llm
+# Assuming quite cutthroat, we have 5 y-axis * 4 x-axis * 1 aggregator * 3 colors = 60 plots/llm
 class CrossAnalyzer(Analyzer):
     def __init__(self, path: PathConfig, cfg: Config, data: DataLoader):
         super().__init__(path, cfg)
         self.scatter_plots = ScatterplotMaker(self.plots_dir, data)
         self.selection_pairs = self._generate_selection_pairs()
 
-    def _generate_selection_pairs(self) -> list[tuple[MetricID, MetricID]]:
+    @classmethod
+    def _generate_selection_pairs(cls) -> list[tuple[MetricID, MetricID]]:
         selection_pairs = []
-        for agg in self.cfg.aggregators:
-            for x in self._generate_x_selection(agg):
-                for y in self._generate_y_selection(agg):
-                    selection_pairs.append((x, y))
+        for x in cls._generate_x_selection():
+            for y in cls._generate_y_selection():
+                selection_pairs.append((x, y))
         return selection_pairs
 
     @staticmethod
-    def _generate_x_selection(agg: AggregatorOption):
+    def _generate_x_selection():
         for surprisal_sub_sub in SurprisalSubSubType:
             if "csqa" in surprisal_sub_sub.value.lower():
                 continue
@@ -717,31 +722,31 @@ class CrossAnalyzer(Analyzer):
                 metric=MetricType.SURPRISAL,
                 sub_metric=SurprisalSubType.FORCED,
                 sub_sub_metric=surprisal_sub_sub,
-                agg=agg,
+                agg=AggregatorOption.SUM,
             )
         yield MetricID(
             metric=MetricType.SURPRISAL,
             sub_metric=SurprisalSubType.LLM,
             sub_sub_metric=AnswerType.ANSWER,
-            agg=agg,
-        )
-        yield MetricID(
-            metric=MetricType.ENTROPY,
-            sub_metric=EntropySubType.FORCED,
-            sub_sub_metric=AllType.ALL,
-            agg=agg,
+            agg=AggregatorOption.SUM,
         )
 
     @staticmethod
-    def _generate_y_selection(agg: AggregatorOption):
+    def _generate_y_selection():
         sst = SurprisalSubType
         for surprisal_sub in [sst.TARGET, sst.STATEMENT, sst.QUESTION, sst.INSTANCE]:
             yield MetricID(
                 metric=MetricType.SURPRISAL,
                 sub_metric=surprisal_sub,
                 sub_sub_metric=AllType.ALL,
-                agg=agg,
+                agg=AggregatorOption.SUM,
             )
+        yield MetricID(
+            metric=MetricType.SURPRISAL,
+            sub_metric=sst.CHOICE,
+            sub_sub_metric=SurprisalSubSubType.MATCHING_ACCORD,
+            agg=AggregatorOption.SUM,
+        )
 
     def run(self, nickname: Nickname):
         self.print("        Plotting select scatter plots...")
