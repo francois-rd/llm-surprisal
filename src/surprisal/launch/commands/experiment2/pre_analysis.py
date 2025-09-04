@@ -264,7 +264,7 @@ class SubsetLoader:
         sequences = self.current_data.logprobs.indices_of(statement_tag)
         seq = self._get_sequence(sequences, f"Statement tag '{statement_tag}'")
         if seq is not None:
-            self.current_data.statement_tag_end_idx = max(seq.indices)
+            self.current_data.statement_tag_end_idx = max(seq.indices) + 1
         return self.current_data.statement_tag_end_idx is not None
 
     def _fill_question_indices(self) -> bool:
@@ -281,16 +281,17 @@ class SubsetLoader:
         sequences = self.current_data.logprobs.indices_of(answer_tag, start_idx)
         seq = self._get_sequence(sequences, f"Answer tag '{answer_tag}'")
         if seq is not None:
-            self.current_data.answer_tag_indices = min(seq.indices), max(seq.indices)
+            answer_tag_indices = min(seq.indices), max(seq.indices) + 1
+            self.current_data.answer_tag_indices = answer_tag_indices
         return self.current_data.answer_tag_indices is not None
 
     def _fill_logprob_of_instance(self) -> bool:
         c = self.current_data
         if not self._first_in_group():
             return True
-        start_idx = c.question_indices[0]
+        start_idx = c.statement_tag_end_idx
         if self._is_baseline():
-            start_idx = c.statement_tag_end_idx
+            start_idx = c.question_indices[0]
         end_idx = c.answer_tag_indices[0]
         c.logprob_of_instance = c.logprobs.to_chosen_logprobs(start_idx, end_idx)
         return True
@@ -365,7 +366,7 @@ class SubsetLoader:
             label_s = self._get_sequence(label_ss, f"Label '{label}'")
             if label_s is None:
                 return False
-            term_ss = self.current_data.logprobs.indices_of(label, start_idx, end_idx)
+            term_ss = self.current_data.logprobs.indices_of(term, start_idx, end_idx)
             term_s = self._get_sequence(term_ss, f"Answer Choice Term '{term}'")
             if term_s is None:
                 return False
