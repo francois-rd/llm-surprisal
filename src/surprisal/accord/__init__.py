@@ -17,6 +17,7 @@ from .base import (
 from .metric import (
     AccordMetrics,
     AllType,
+    AnswerType,
     MetricID,
     MetricType,
     MetricSubType,

@@ -17,6 +17,10 @@ class AllType(MetricSubSubType):
     ALL = "ALL"
 
 
+class AnswerType(MetricSubSubType):
+    ANSWER = "ANSWER"
+
+
 class RankSubSubType(MetricSubSubType):
     MATCHING_ACCORD = "MATCHING_ACCORD"
     MATCHING_CSQA = "MATCHING_CSQA"
@@ -49,13 +53,16 @@ class SurprisalSubType(MetricSubType):
     FORCED = "FORCED"
     LABEL = "LABEL"
     CHOICE = "CHOICE"
+    LLM = "LLM"
 
-    def get_subtype(self) -> type[Enum]:
+    def get_subtype(self) -> type[MetricSubSubType]:
         st = SurprisalSubType
         if self in [st.SOURCE, st.TARGET, st.STATEMENT, st.QUESTION, st.INSTANCE]:
             return AllType
         elif self in [st.FORCED, st.LABEL, st.CHOICE]:
             return SurprisalSubSubType
+        elif self == st.LLM:
+            return AnswerType
         else:
             raise ValueError(f"Unsupported surprisal type: {self}")
 
@@ -186,6 +193,8 @@ class AccordMetrics:
     surprisal_label_all: dict[AggregatorStr, float]
     surprisal_choice_all: dict[AggregatorStr, float]
 
+    surprisal_llm_answer: dict[AggregatorStr, float]
+
     rank_forced_matching_accord: dict[AggregatorStr, int]
     rank_label_matching_accord: dict[AggregatorStr, int]
     rank_choice_matching_accord: dict[AggregatorStr, int]
@@ -281,6 +290,8 @@ class AccordMetrics:
             surprisal_forced_all=cls._surprisal_skip(forced_lps, None),
             surprisal_label_all=cls._surprisal_skip(label_lps, None),
             surprisal_choice_all=cls._surprisal_skip(choice_lps, None),
+            # Answer x llm surprisal.
+            surprisal_llm_answer=cls._surprisal_llm_answer(forced_lps),
             # Forced/label/choice x accord/csqa rank.
             rank_forced_matching_accord=cls._rank(forced_lps, accord_label),
             rank_label_matching_accord=cls._rank(label_lps, accord_label),
@@ -345,17 +356,30 @@ class AccordMetrics:
         return {agg.value: agg.aggregate(lp) for agg, lp in data_by_agg.items()}
 
     @classmethod
+    def _surprisal_llm_answer(
+        cls,
+        data: dict[AccordLabel, dict[AggregatorOption, float]],
+    ) -> dict[AggregatorStr, float]:
+        by_agg = cls._invert(data)
+        return {a.value: cls._sort_by_top_rank(lps)[0][1] for a, lps in by_agg.items()}
+
+    @staticmethod
+    def _sort_by_top_rank(
+        data: dict[AccordLabel, float]
+    ) -> list[tuple[AccordLabel, float]]:
+        all_neg = all(x < 0 for x in data.values())
+        return sorted(data.items(), key=lambda x: x[1], reverse=all_neg)
+
+    @classmethod
     def _rank(
         cls, data: dict[AccordLabel, dict[AggregatorOption, float]], label: AccordLabel
     ) -> dict[AggregatorStr, int]:
         data_by_agg = cls._invert(data)
         return {agg.value: cls._do_rank(lps, label) for agg, lps in data_by_agg.items()}
 
-    @staticmethod
-    def _do_rank(data: dict[AccordLabel, float], label: AccordLabel) -> int:
-        all_neg = all(x < 0 for x in data.values())
-        sort = sorted(data.items(), key=lambda x: x[1], reverse=all_neg)
-        return list(dict(sort)).index(label) + 1
+    @classmethod
+    def _do_rank(cls, data: dict[AccordLabel, float], label: AccordLabel) -> int:
+        return list(dict(cls._sort_by_top_rank(data))).index(label) + 1
 
     @staticmethod
     def _position(test_label: AccordLabel, start_label: AccordLabel) -> int:

@@ -20,6 +20,7 @@ from ....accord import (
     MetricID,
     MetricType,
     AllType,
+    AnswerType,
     EntropySubType,
     RankSubType,
     RankSubSubType,
@@ -681,6 +682,7 @@ class CorrectnessAnalyzer(Analyzer):
 #  surprisal_forced_not_matching_accord
 #  surprisal_forced_not_matching_csqa  => not relevant for exp3
 #  surprisal_forced_all
+#  surprisal_llm_answer
 #  rank_forced_matching_accord  => non-continuous and makes for a poor plot
 #  rank_forced_matching_csqa  => not relevant for exp3
 #  entropy_forced_all
@@ -691,7 +693,7 @@ class CorrectnessAnalyzer(Analyzer):
 #  AND on top of that we are repeating these options along 3 colors: Factuality, Correctness, and Both.
 
 
-# Assuming quite cutthroat, we have 4 y-axis * 4 x-axis * 1 aggregator * 3 colors = 48 plots/llm
+# Assuming quite cutthroat, we have 4 y-axis * 5 x-axis * 1 aggregator * 3 colors = 60 plots/llm
 class CrossAnalyzer(Analyzer):
     def __init__(self, path: PathConfig, cfg: Config, data: DataLoader):
         super().__init__(path, cfg)
@@ -717,6 +719,12 @@ class CrossAnalyzer(Analyzer):
                 sub_sub_metric=surprisal_sub_sub,
                 agg=agg,
             )
+        yield MetricID(
+            metric=MetricType.SURPRISAL,
+            sub_metric=SurprisalSubType.LLM,
+            sub_sub_metric=AnswerType.ANSWER,
+            agg=agg,
+        )
         yield MetricID(
             metric=MetricType.ENTROPY,
             sub_metric=EntropySubType.FORCED,
