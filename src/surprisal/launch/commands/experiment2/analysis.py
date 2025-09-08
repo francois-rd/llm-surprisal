@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Callable
 import warnings
 import os
@@ -38,12 +39,15 @@ def metric_as_string(metric_id: MetricID, add_agg: bool = False) -> str:
     return f"{AccordMetrics.as_attribute_name(metric_id)}{sub_title}"
 
 
-def paired_metric_as_string(paired_id: PairedMetricID, add_agg: bool = False) -> str:
+def paired_metric_as_string(
+    paired_id: PairedMetricID, opposite_correctness: bool, add_agg: bool = False
+) -> str:
+    prefix = "opp_only_" if opposite_correctness else ""
     if add_agg:
-        sub_title = f"_{paired_id.agg.value.title()}"
+        suffix = f"_{paired_id.agg.value.title()}"
     else:
-        sub_title = ""
-    return f"{PairedAccordMetrics.as_attribute_name(paired_id)}{sub_title}"
+        suffix = ""
+    return f"{prefix}{PairedAccordMetrics.as_attribute_name(paired_id)}{suffix}"
 
 
 def factuality_diff_by_subsets(group_df):
@@ -112,11 +116,16 @@ class DataLoader:
         return df
 
     def make_paired_df(
-        self, llm: Nickname, paired_metric_id: PairedMetricID
+        self,
+        llm: Nickname,
+        paired_metric_id: PairedMetricID,
+        keep_only_opposite_correctness: bool,
     ) -> pd.DataFrame:
         df = pd.DataFrame(self.data_by_llm[llm.replace("/", "-")])
         self._add_correctness(df, paired_metric_id.agg)
         df["PairedMetric"] = df["DataID"].apply(self._get_paired_fn(paired_metric_id))
+        if keep_only_opposite_correctness:
+            df = self._keep_opposite_correctness(df)
         # BASELINE doesn't have any paired data. For others, F->data and AF->None.
         return df[~df["PairedMetric"].isna()]
 
@@ -128,6 +137,14 @@ class DataLoader:
             return None if metrics is None else metrics.get(paired_metric_id)
 
         return helper
+
+    @staticmethod
+    def _keep_opposite_correctness(df: pd.DataFrame) -> pd.DataFrame:
+        keep = []
+        for group_id, group_df in df.groupby(by="GroupID"):
+            if len(group_df["Correctness"].unique()) > 1:
+                keep.append(group_id)
+        return df[df["GroupID"].isin(keep)]
 
     def _add_correctness(self, df: pd.DataFrame, agg: AggregatorOption) -> None:
         # Correctness could definitely be moved to pre_analysis, but it doesn't take
@@ -299,7 +316,7 @@ class DiffViolinMaker:
         self, llm: Nickname, selection: list[PairedMetricID]
     ) -> None:
         for paired_id in selection:
-            df = self.data.make_paired_df(llm, paired_id)
+            df = self.data.make_paired_df(llm, paired_id, False)
             kwargs = self._get_paired_kwargs(paired_id)
             self._do_make(df, llm, reject_outliers=False, **kwargs)
             self._do_make(df, llm, reject_outliers=True, **kwargs)
@@ -322,7 +339,9 @@ class DiffViolinMaker:
         return dict(
             y_col="PairedMetric",
             y_axis_sub_title=f"{paired_id.metric.value.title()}{sub_label}",
-            file_base_name=paired_metric_as_string(paired_id, add_agg=True),
+            file_base_name=paired_metric_as_string(
+                paired_id, opposite_correctness=False, add_agg=True
+            ),
         )
 
     def _reject_outliers(self, df: pd.DataFrame, col: str) -> pd.DataFrame:
@@ -394,12 +413,15 @@ class BinaryViolinMaker:
             self._do_make(df, llm, reject_outliers=True, **kwargs)
 
     def make_paired_select(
-        self, llm: Nickname, selection: list[PairedMetricID]
+        self,
+        llm: Nickname,
+        selection: list[PairedMetricID],
+        opposite_correctness: bool,
     ) -> None:
         for paired_id in selection:
-            df = self.data.make_paired_df(llm, paired_id)
+            df = self.data.make_paired_df(llm, paired_id, opposite_correctness)
             df["Subset"] = df["Subset"].apply(lambda x: AccordSubset(x).name)
-            kwargs = self._get_paired_kwargs(paired_id)
+            kwargs = self._get_paired_kwargs(paired_id, opposite_correctness)
             self._do_make(df, llm, reject_outliers=False, **kwargs)
             self._do_make(df, llm, reject_outliers=True, **kwargs)
 
@@ -430,12 +452,16 @@ class BinaryViolinMaker:
         )
 
     @staticmethod
-    def _get_paired_kwargs(paired_id: PairedMetricID) -> dict[str, str]:
+    def _get_paired_kwargs(
+        paired_id: PairedMetricID, opposite_correctness: bool
+    ) -> dict[str, str]:
         sub_label = f": {paired_id.agg.value.lower()}(logprobs)"
         return dict(
             y_col="PairedMetric",
             y_axis_title=f"{paired_id.metric.value.title()}{sub_label}",
-            file_base_name=paired_metric_as_string(paired_id, add_agg=True),
+            file_base_name=paired_metric_as_string(
+                paired_id, opposite_correctness, add_agg=True
+            ),
             x_range=[
                 min(s.value for s in AccordSubset) - 1,
                 max(s.value for s in AccordSubset),  # Lack of BASELINE means no +1.
@@ -555,6 +581,13 @@ class ScatterplotMaker:
         save_figure(fig, plot_path, f"{metric_x_name}_{metric_y_name}")
 
 
+@dataclass
+class BinaryTTestSelection:
+    metrics: list[MetricID]
+    paired: list[PairedMetricID] | None
+    paired_opp_only: list[PairedMetricID] | None
+
+
 class BinaryTTest:
     def __init__(
         self,
@@ -592,19 +625,26 @@ class BinaryTTest:
 
     def run(
         self, llm: Nickname, aggregators: list[AggregatorOption]
-    ) -> tuple[list[MetricID], list[PairedMetricID]]:
-        self.results, good_metric_p_values, good_paired_p_values = {}, [], []
+    ) -> BinaryTTestSelection:
+        if self.include_paired:
+            selection = BinaryTTestSelection([], [], [])
+        else:
+            selection = BinaryTTestSelection([], None, None)
+        self.results = {}
         for metric_id in MetricID.yield_all(aggregators):
             if self._do_metric_run(llm, metric_id):
-                good_metric_p_values.append(metric_id)
+                selection.metrics.append(metric_id)
         if self.include_paired:
             for paired_id in PairedMetricID.yield_all(aggregators):
-                if self._do_paired_run(llm, paired_id):
-                    good_paired_p_values.append(paired_id)
+                if self._do_paired_run(llm, paired_id, opposite_correctness=False):
+                    selection.paired.append(paired_id)
+            for paired_id in PairedMetricID.yield_all(aggregators):
+                if self._do_paired_run(llm, paired_id, opposite_correctness=True):
+                    selection.paired_opp_only.append(paired_id)
         file_path = os.path.join(self.analysis_dir, self.binary, llm + ".csv")
         pd.DataFrame(self.results).to_csv(ensure_path(file_path), index=False)
         self.results = None
-        return good_metric_p_values, good_paired_p_values
+        return selection
 
     def _do_metric_run(self, llm: Nickname, metric_id: MetricID) -> bool:
         metric_name = metric_as_string(metric_id, add_agg=True)
@@ -618,13 +658,15 @@ class BinaryTTest:
             self.results.setdefault(subset, []).append(p_value)
         return count >= self.min_count
 
-    def _do_paired_run(self, llm: Nickname, paired_id: PairedMetricID) -> bool:
-        paired_name = paired_metric_as_string(paired_id, add_agg=True)
-        self.results.setdefault("Name", []).append(paired_name)
+    def _do_paired_run(
+        self, llm: Nickname, paired_id: PairedMetricID, opposite_correctness: bool
+    ) -> bool:
+        name = paired_metric_as_string(paired_id, opposite_correctness, add_agg=True)
+        self.results.setdefault("Name", []).append(name)
         # Add dummy value for missing BASELINE subset.
         self.results.setdefault(AccordSubset.BASELINE.value, []).append(-1)
 
-        df = self.data.make_paired_df(llm, paired_id)
+        df = self.data.make_paired_df(llm, paired_id, opposite_correctness)
         count = 0
         for subset, group_df in df.groupby(by="Subset"):
             p_value = self._run_test(group_df, "PairedMetric")
@@ -718,12 +760,12 @@ class DiffTTest:
         return good_paired_p_values
 
     def _do_paired_run(self, llm: Nickname, paired_id: PairedMetricID) -> bool:
-        paired_name = paired_metric_as_string(paired_id, add_agg=True)
+        paired_name = paired_metric_as_string(paired_id, False, add_agg=True)
         self.results.setdefault("Name", []).append(paired_name)
         # Add dummy value for missing BASELINE subset.
         self.results.setdefault(AccordSubset.BASELINE.value, []).append(-1)
 
-        df = self.data.make_paired_df(llm, paired_id)
+        df = self.data.make_paired_df(llm, paired_id, False)
         count = 0
         for subset, group_df in df.groupby(by="Subset"):
             diff = self._reject_outliers(group_df["PairedMetric"].tolist())
@@ -813,7 +855,7 @@ class FactualityAnalyzer(Analyzer):
 
     def run(self, nickname: Nickname):
         self.print("        Running t-tests...")
-        metrics, _ = self.metric_t_tests.run(nickname, self.cfg.aggregators)
+        metrics = self.metric_t_tests.run(nickname, self.cfg.aggregators).metrics
         paired = self.paired_t_tests.run(nickname, self.cfg.aggregators)
         self.print("        Plotting select histograms...")
         self.histograms.make_select(nickname, metrics)
@@ -850,10 +892,11 @@ class CorrectnessAnalyzer(Analyzer):
 
     def run(self, nickname: Nickname):
         self.print("        Running t-tests...")
-        metrics, paired = self.t_tests.run(nickname, self.cfg.aggregators)
+        selection = self.t_tests.run(nickname, self.cfg.aggregators)
         self.print("        Plotting select violins...")
-        self.violins.make_metric_select(nickname, metrics)
-        self.violins.make_paired_select(nickname, paired)
+        self.violins.make_metric_select(nickname, selection.metrics)
+        self.violins.make_paired_select(nickname, selection.paired, False)
+        self.violins.make_paired_select(nickname, selection.paired_opp_only, True)
         self.print("        Done.")
 
 
