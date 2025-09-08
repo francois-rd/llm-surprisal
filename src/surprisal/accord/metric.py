@@ -5,7 +5,7 @@ from enum import Enum
 from scipy.stats import entropy
 import numpy as np
 
-from .base import AccordLabel
+from .base import AccordLabel, AccordStatementID
 from ..core import AggregatorOption, AggregatorStr
 
 
@@ -408,3 +408,82 @@ class AccordMetrics:
     @staticmethod
     def _do_mass(data: list[float]) -> float:
         return float(sum(np.exp([-abs(x) for x in data])))  # If pos logprobs, need neg.
+
+
+class PairedMetricType(Enum):
+    SOURCE = "SOURCE"
+    TARGET = "TARGET"
+    STATEMENT = "STATEMENT"
+
+
+@dataclass
+class PairedMetricID:
+    metric: PairedMetricType
+    agg: AggregatorOption | None
+
+    @staticmethod
+    def yield_all(aggregators: list[AggregatorOption]) -> Iterable["PairedMetricID"]:
+        for metric in PairedMetricType:
+            for agg in aggregators:
+                yield PairedMetricID(metric, agg)
+
+
+@dataclass
+class PairedAccordMetrics:
+    paired_source: dict[AggregatorStr, float]
+    paired_target: dict[AggregatorStr, float]
+    paired_statement: dict[AggregatorStr, float]
+
+    @staticmethod
+    def as_attribute_name(paired_metric_id: PairedMetricID) -> str:
+        return f"paired_{paired_metric_id.metric.value.lower()}"
+
+    def get(self, paired_metric_id: PairedMetricID) -> float:
+        attr, agg = self.as_attribute_name(paired_metric_id), paired_metric_id.agg
+        return getattr(self, attr)[agg.value]
+
+    @classmethod
+    def from_data(
+        cls,
+        factual_source_lps: dict[
+            tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
+        ],
+        factual_target_lps: dict[
+            tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
+        ],
+        anti_factual_source_lps: dict[
+            tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
+        ],
+        anti_factual_target_lps: dict[
+            tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
+        ],
+    ) -> "PairedAccordMetrics":
+        sources = cls._pair_up(factual_source_lps, anti_factual_source_lps)
+        targets = cls._pair_up(factual_target_lps, anti_factual_target_lps)
+        combine = {agg: lps + targets[agg] for agg, lps in sources.items()}
+        return PairedAccordMetrics(
+            paired_source=cls._aggregate(sources),
+            paired_target=cls._aggregate(targets),
+            paired_statement=cls._aggregate(combine),
+        )
+
+    @staticmethod
+    def _pair_up(
+        factual_lps: dict[
+            tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
+        ],
+        anti_factual_lps: dict[
+            tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
+        ],
+    ) -> dict[AggregatorOption, list[float]]:
+        result = {}
+        for key, f_data in factual_lps.items():
+            for agg, af_lp in anti_factual_lps[key].items():
+                result.setdefault(agg, []).append(f_data[agg] - af_lp)
+        return result
+
+    @staticmethod
+    def _aggregate(
+        data: dict[AggregatorOption, list[float]]
+    ) -> dict[AggregatorStr, float]:
+        return {agg.value: agg.aggregate(lp) for agg, lp in data.items()}

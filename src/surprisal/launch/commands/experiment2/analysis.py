@@ -1,13 +1,10 @@
-# TODO:
-#  - DONE include tree size 0 (baseline) as a first facet
-#  - or else normalize every other facet by subtracting baseline (somehow... since
-#    each baseline attaches to multiple different non-baseline instances).
+from typing import Callable
 import warnings
 import os
 
 from coma import command
 import numpy as np
-from scipy.stats import ttest_rel, ttest_ind
+from scipy.stats import ttest_rel, ttest_ind, ttest_1samp
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -17,7 +14,9 @@ from ....io import ConditionalPrinter, PathConfig, load_dataclass_jsonl, ensure_
 from ....llms import Nickname
 from ....accord import (
     AccordMetrics,
+    PairedAccordMetrics,
     MetricID,
+    PairedMetricID,
     MetricType,
     AllType,
     AnswerType,
@@ -37,6 +36,14 @@ def metric_as_string(metric_id: MetricID, add_agg: bool = False) -> str:
     else:
         sub_title = ""
     return f"{AccordMetrics.as_attribute_name(metric_id)}{sub_title}"
+
+
+def paired_metric_as_string(paired_id: PairedMetricID, add_agg: bool = False) -> str:
+    if add_agg:
+        sub_title = f"_{paired_id.agg.value.title()}"
+    else:
+        sub_title = ""
+    return f"{PairedAccordMetrics.as_attribute_name(paired_id)}{sub_title}"
 
 
 def factuality_diff_by_subsets(group_df):
@@ -89,24 +96,11 @@ class DataLoader:
         llm_data.setdefault("Subset", []).append(data.subset.value)
         llm_data.setdefault("DataID", []).append(self.id_counter)
 
-    def make_df(
+    def make_metric_df(
         self, llm: Nickname, metric_id_1: MetricID, metric_id_2: MetricID | None = None
     ) -> pd.DataFrame:
         df = pd.DataFrame(self.data_by_llm[llm.replace("/", "-")])
-
-        # Correctness could definitely be moved to pre_analysis, but it doesn't take
-        # long to compute (milliseconds), so there's no real harm putting it here.
-        # Logic: The LLM is correct if the RANK of the FORCED label matching the ACCORD
-        #  label is 1 (i.e., the top ranked amongst all the forced labels).
-        correct_id = MetricID(
-            metric=MetricType.RANK,
-            sub_metric=RankSubType.FORCED,
-            sub_sub_metric=RankSubSubType.MATCHING_ACCORD,
-            agg=metric_id_1.agg,
-        )
-        df["Correctness"] = df["DataID"].apply(
-            lambda id_: str(self.data_by_id[id_].metrics.get(correct_id) == 1)
-        )
+        self._add_correctness(df, metric_id_1.agg)  # Agg choice is arbitrary here.
         col_name = "Metric" if metric_id_2 is None else "Metric1"
         df[col_name] = df["DataID"].apply(
             lambda id_: self.data_by_id[id_].metrics.get(metric_id_1)
@@ -116,6 +110,39 @@ class DataLoader:
                 lambda id_: self.data_by_id[id_].metrics.get(metric_id_2)
             )
         return df
+
+    def make_paired_df(
+        self, llm: Nickname, paired_metric_id: PairedMetricID
+    ) -> pd.DataFrame:
+        df = pd.DataFrame(self.data_by_llm[llm.replace("/", "-")])
+        self._add_correctness(df, paired_metric_id.agg)
+        df["PairedMetric"] = df["DataID"].apply(self._get_paired_fn(paired_metric_id))
+        # BASELINE doesn't have any paired data. For others, F->data and AF->None.
+        return df[~df["PairedMetric"].isna()]
+
+    def _get_paired_fn(
+        self, paired_metric_id: PairedMetricID
+    ) -> Callable[[int], float | None]:
+        def helper(data_id: int):
+            metrics = self.data_by_id[data_id].paired_metrics
+            return None if metrics is None else metrics.get(paired_metric_id)
+
+        return helper
+
+    def _add_correctness(self, df: pd.DataFrame, agg: AggregatorOption) -> None:
+        # Correctness could definitely be moved to pre_analysis, but it doesn't take
+        # long to compute (milliseconds), so there's no real harm putting it here.
+        # Logic: The LLM is correct if the RANK of the FORCED label matching the ACCORD
+        #  label is 1 (i.e., the top ranked amongst all the forced labels).
+        correct_id = MetricID(
+            metric=MetricType.RANK,
+            sub_metric=RankSubType.FORCED,
+            sub_sub_metric=RankSubSubType.MATCHING_ACCORD,
+            agg=agg,
+        )
+        df["Correctness"] = df["DataID"].apply(
+            lambda id_: str(self.data_by_id[id_].metrics.get(correct_id) == 1)
+        )
 
 
 def make_plot_path(plots_dir: str, main_type: str, llm: Nickname, sub_type: str) -> str:
@@ -183,7 +210,7 @@ class HistogramMaker:
 
     def make_select(self, llm: Nickname, selection: list[MetricID]) -> None:
         for metric_id in selection:
-            df = self.data.make_df(llm, metric_id)
+            df = self.data.make_metric_df(llm, metric_id)
             self._do_make_factuality(df, llm, metric_id)
             self._do_make_diff(df, llm, metric_id)
 
@@ -260,31 +287,61 @@ class DiffViolinMaker:
         self.data = data
         self.outliers = outlier_threshold
 
-    def make_select(self, llm: Nickname, selection: list[MetricID]) -> None:
+    def make_metric_select(self, llm: Nickname, selection: list[MetricID]) -> None:
         for metric_id in selection:
-            df = self._make_df(llm, metric_id)
-            self._do_make(df, llm, metric_id, reject_outliers=False)
-            self._do_make(df, llm, metric_id, reject_outliers=True)
+            df = as_factuality_diff(self.data.make_metric_df(llm, metric_id))
+            df = df[df["Subset"] != 0]
+            kwargs = self._get_metric_kwargs(metric_id)
+            self._do_make(df, llm, reject_outliers=False, **kwargs)
+            self._do_make(df, llm, reject_outliers=True, **kwargs)
 
-    def _make_df(self, llm: Nickname, metric_id: MetricID) -> pd.DataFrame:
-        df = as_factuality_diff(self.data.make_df(llm, metric_id))
-        return df[df["Subset"] != 0]
+    def make_paired_select(
+        self, llm: Nickname, selection: list[PairedMetricID]
+    ) -> None:
+        for paired_id in selection:
+            df = self.data.make_paired_df(llm, paired_id)
+            kwargs = self._get_paired_kwargs(paired_id)
+            self._do_make(df, llm, reject_outliers=False, **kwargs)
+            self._do_make(df, llm, reject_outliers=True, **kwargs)
 
-    def _reject_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
+    @staticmethod
+    def _get_metric_kwargs(metric_id: MetricID) -> dict[str, str]:
+        if metric_id.metric.uses_aggregator():
+            sub_label = f": {metric_id.agg.value.lower()}(logprobs)"
+        else:
+            sub_label = ""
+        return dict(
+            y_col="Diff",
+            y_axis_sub_title=f"{metric_id.metric.value.title()}{sub_label}",
+            file_base_name=metric_as_string(metric_id, add_agg=True),
+        )
+
+    @staticmethod
+    def _get_paired_kwargs(paired_id: PairedMetricID) -> dict[str, str]:
+        sub_label = f": {paired_id.agg.value.lower()}(logprobs)"
+        return dict(
+            y_col="PairedMetric",
+            y_axis_sub_title=f"{paired_id.metric.value.title()}{sub_label}",
+            file_base_name=paired_metric_as_string(paired_id, add_agg=True),
+        )
+
+    def _reject_outliers(self, df: pd.DataFrame, col: str) -> pd.DataFrame:
         if self.outliers <= 0:
             return df
-        return df[compute_outlier_mask(np.array(df["Diff"]), self.outliers)]
+        return df[compute_outlier_mask(np.array(df[col]), self.outliers)]
 
     def _do_make(
         self,
         df: pd.DataFrame,
         llm: Nickname,
-        metric_id: MetricID,
         reject_outliers: bool,
+        y_col: str,
+        y_axis_sub_title: str,
+        file_base_name: str,
     ):
         fig = px.violin(
-            data_frame=self._reject_outliers(df) if reject_outliers else df,
-            y="Diff",
+            data_frame=self._reject_outliers(df, y_col) if reject_outliers else df,
+            y=y_col,
             color="Subset",
             box=True,
             category_orders={
@@ -300,15 +357,9 @@ class DiffViolinMaker:
             # range_x and range_y might need updating for a camera ready version.
         )
 
-        if metric_id.metric.uses_aggregator():
-            sub_label = f": {metric_id.agg.value.lower()}(logprobs)"
-        else:
-            sub_label = ""
-        sub_title = f"{metric_id.metric.value.title()}{sub_label}"
-
         fig.update_layout(
             xaxis=dict(title="ACCORD Subset", showticklabels=False),
-            yaxis=dict(title=f"Paired difference in Factuality of {sub_title}"),
+            yaxis=dict(title=f"Paired difference in Factuality of {y_axis_sub_title}"),
             margin=dict(l=0, r=0, b=60, t=0),
         )
         fig.add_hline(y=0.0, opacity=0.5, line_width=2, line_dash="dash")
@@ -316,7 +367,7 @@ class DiffViolinMaker:
         fig.update_xaxes(showticklabels=False)  # TODO: This isn't doing anything?
         sub_type = "Diff-No-Outliers" if reject_outliers else "Diff-All"
         plot_path = make_plot_path(self.plots_dir, "violin", llm, sub_type)
-        save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
+        save_figure(fig, plot_path, file_base_name)
 
 
 class BinaryViolinMaker:
@@ -334,68 +385,96 @@ class BinaryViolinMaker:
         self.binary = binary_column_name
         self.options = binary_options
 
-    def make_select(self, llm: Nickname, selection: list[MetricID]) -> None:
+    def make_metric_select(self, llm: Nickname, selection: list[MetricID]) -> None:
         for metric_id in selection:
-            df = self._make_df(llm, metric_id)
-            self._do_make(df, llm, metric_id, reject_outliers=False)
-            self._do_make(df, llm, metric_id, reject_outliers=True)
+            df = self.data.make_metric_df(llm, metric_id)
+            df["Subset"] = df["Subset"].apply(lambda x: AccordSubset(x).name)
+            kwargs = self._get_metric_kwargs(metric_id)
+            self._do_make(df, llm, reject_outliers=False, **kwargs)
+            self._do_make(df, llm, reject_outliers=True, **kwargs)
 
-    def _make_df(self, llm: Nickname, metric_id: MetricID) -> pd.DataFrame:
-        df = self.data.make_df(llm, metric_id)
-        df["Subset"] = df["Subset"].apply(lambda x: AccordSubset(x).name)
-        return df
+    def make_paired_select(
+        self, llm: Nickname, selection: list[PairedMetricID]
+    ) -> None:
+        for paired_id in selection:
+            df = self.data.make_paired_df(llm, paired_id)
+            df["Subset"] = df["Subset"].apply(lambda x: AccordSubset(x).name)
+            kwargs = self._get_paired_kwargs(paired_id)
+            self._do_make(df, llm, reject_outliers=False, **kwargs)
+            self._do_make(df, llm, reject_outliers=True, **kwargs)
 
-    def _reject_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _reject_outliers(self, df: pd.DataFrame, col: str) -> pd.DataFrame:
         if self.outliers <= 0:
             return df
         dfs = []
         for option in self.options:
-            data = np.array(df[df[self.binary] == option]["Metric"])
+            data = np.array(df[df[self.binary] == option][col])
             mask = compute_outlier_mask(data, self.outliers)
             dfs.append(df[df[self.binary] == option][mask])
         return pd.concat(dfs)
+
+    @staticmethod
+    def _get_metric_kwargs(metric_id: MetricID) -> dict[str, str]:
+        if metric_id.metric.uses_aggregator():
+            sub_label = f": {metric_id.agg.value.lower()}(logprobs)"
+        else:
+            sub_label = ""
+        return dict(
+            y_col="Metric",
+            y_axis_title=f"{metric_id.metric.value.title()}{sub_label}",
+            file_base_name=metric_as_string(metric_id, add_agg=True),
+            x_range=[
+                min(s.value for s in AccordSubset) - 1,
+                max(s.value for s in AccordSubset) + 1,
+            ],
+        )
+
+    @staticmethod
+    def _get_paired_kwargs(paired_id: PairedMetricID) -> dict[str, str]:
+        sub_label = f": {paired_id.agg.value.lower()}(logprobs)"
+        return dict(
+            y_col="PairedMetric",
+            y_axis_title=f"{paired_id.metric.value.title()}{sub_label}",
+            file_base_name=paired_metric_as_string(paired_id, add_agg=True),
+            x_range=[
+                min(s.value for s in AccordSubset) - 1,
+                max(s.value for s in AccordSubset),  # Lack of BASELINE means no +1.
+            ],
+        )
 
     def _do_make(
         self,
         df: pd.DataFrame,
         llm: Nickname,
-        metric_id: MetricID,
         reject_outliers: bool,
+        y_col: str,
+        y_axis_title: str,
+        file_base_name: str,
+        x_range: tuple[int, int],
     ):
-        df = self._reject_outliers(df) if reject_outliers else df
+        df = self._reject_outliers(df, y_col) if reject_outliers else df
         fig = go.Figure()
         for option in self.options:
-            self._add_trace(fig, df, option)
-
-        if metric_id.metric.uses_aggregator():
-            sub_label = f": {metric_id.agg.value.lower()}(logprobs)"
-        else:
-            sub_label = ""
+            self._add_trace(fig, df, option, y_col)
 
         fig.update_layout(
             violingap=0,
             violinmode="overlay",
-            xaxis=dict(
-                title="ACCORD Subset",
-                range=[
-                    min(s.value for s in AccordSubset) - 1,
-                    max(s.value for s in AccordSubset) + 1,
-                ],
-            ),
-            yaxis=dict(title=f"{metric_id.metric.value.title()}{sub_label}"),
+            xaxis=dict(title="ACCORD Subset", range=x_range),
+            yaxis=dict(title=y_axis_title),
             margin=dict(l=0, r=0, b=60, t=0),
-            template="simple_white",  # TODO: For camera ready, correctness should not have same color as Factuality.
+            template="simple_white",  # TODO: For camera ready, Correctness should not have same color as Factuality.
             legend=dict(title=self.binary),
         )
         sub_type = self.binary + ("-No-Outliers" if reject_outliers else "-All")
         plot_path = make_plot_path(self.plots_dir, "violin", llm, sub_type)
-        save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
+        save_figure(fig, plot_path, file_base_name)
 
-    def _add_trace(self, fig, df: pd.DataFrame, option: str) -> None:
+    def _add_trace(self, fig, df: pd.DataFrame, option: str, y_col: str) -> None:
         fig.add_trace(
             go.Violin(
                 x=df["Subset"][df[self.binary] == option],
-                y=df["Metric"][df[self.binary] == option],
+                y=df[y_col][df[self.binary] == option],
                 box=dict(visible=True),
                 legendgroup=option,
                 scalegroup=option,
@@ -415,7 +494,7 @@ class ScatterplotMaker:
     ) -> None:
         colors = ["Factuality", "Correctness", "Legend"]
         for pair in selection_pairs:
-            df = self.data.make_df(llm, pair[0], pair[1])
+            df = self.data.make_metric_df(llm, pair[0], pair[1])
             df["Legend"] = df.apply(
                 lambda x: x["Factuality"] + ", " + x["Correctness"], axis=1
             )
@@ -476,7 +555,7 @@ class ScatterplotMaker:
         save_figure(fig, plot_path, f"{metric_x_name}_{metric_y_name}")
 
 
-class TTest:
+class BinaryTTest:
     def __init__(
         self,
         data: DataLoader,
@@ -488,6 +567,7 @@ class TTest:
         binary_options: tuple[str, str],
         test_type: str,  # Options are: {'independent', 'relative'}
         test_alternative: str,  # Options are: {'two-sided', 'less', 'greater'}
+        include_paired: bool,
     ):
         self.data = data
         self.analysis_dir = analysis_dir
@@ -507,25 +587,47 @@ class TTest:
         else:
             raise ValueError(f"Unsupported t-test type: {test_type}")
         self.outliers_from_diff = test_type == "relative"
+        self.include_paired = include_paired
         self.results = None
 
-    def run(self, llm: Nickname, aggregators: list[AggregatorOption]) -> list[MetricID]:
-        self.results, good_p_values = {}, []
+    def run(
+        self, llm: Nickname, aggregators: list[AggregatorOption]
+    ) -> tuple[list[MetricID], list[PairedMetricID]]:
+        self.results, good_metric_p_values, good_paired_p_values = {}, [], []
         for metric_id in MetricID.yield_all(aggregators):
-            if self._do_run(llm, metric_id):
-                good_p_values.append(metric_id)
+            if self._do_metric_run(llm, metric_id):
+                good_metric_p_values.append(metric_id)
+        if self.include_paired:
+            for paired_id in PairedMetricID.yield_all(aggregators):
+                if self._do_paired_run(llm, paired_id):
+                    good_paired_p_values.append(paired_id)
         file_path = os.path.join(self.analysis_dir, self.binary, llm + ".csv")
         pd.DataFrame(self.results).to_csv(ensure_path(file_path), index=False)
         self.results = None
-        return good_p_values
+        return good_metric_p_values, good_paired_p_values
 
-    def _do_run(self, llm: Nickname, metric_id: MetricID) -> bool:
+    def _do_metric_run(self, llm: Nickname, metric_id: MetricID) -> bool:
         metric_name = metric_as_string(metric_id, add_agg=True)
-        self.results.setdefault("Metric", []).append(metric_name)
-        df = self.data.make_df(llm, metric_id)
+        self.results.setdefault("Name", []).append(metric_name)
+        df = self.data.make_metric_df(llm, metric_id)
         count = 0
         for subset, group_df in df.groupby(by="Subset"):
-            p_value = self._run_test(group_df)
+            p_value = self._run_test(group_df, "Metric")
+            if 0 < p_value < self.threshold:
+                count += 1
+            self.results.setdefault(subset, []).append(p_value)
+        return count >= self.min_count
+
+    def _do_paired_run(self, llm: Nickname, paired_id: PairedMetricID) -> bool:
+        paired_name = paired_metric_as_string(paired_id, add_agg=True)
+        self.results.setdefault("Name", []).append(paired_name)
+        # Add dummy value for missing BASELINE subset.
+        self.results.setdefault(AccordSubset.BASELINE.value, []).append(-1)
+
+        df = self.data.make_paired_df(llm, paired_id)
+        count = 0
+        for subset, group_df in df.groupby(by="Subset"):
+            p_value = self._run_test(group_df, "PairedMetric")
             if 0 < p_value < self.threshold:
                 count += 1
             self.results.setdefault(subset, []).append(p_value)
@@ -542,10 +644,10 @@ class TTest:
             b_mask = compute_outlier_mask(b, self.outliers)
         return a[a_mask].tolist(), b[b_mask].tolist()
 
-    def _run_test(self, df: pd.DataFrame) -> float:
+    def _run_test(self, df: pd.DataFrame, col: str) -> float:
         split_data = {}
         for option, group_df in df.groupby(by=self.binary):
-            data = group_df.sort_values(by="GroupID")["Metric"].tolist()
+            data = group_df.sort_values(by="GroupID")[col].tolist()
             if option in self.options:
                 split_data[option] = data
             else:
@@ -565,6 +667,83 @@ class TTest:
             warnings.simplefilter("error", RuntimeWarning)
             try:
                 return self.test(a=a, b=b, **self.test_kwargs).pvalue
+            except RuntimeWarning as e:
+                # This is to catch:
+                #  RuntimeWarning: Precision loss occurred in moment calculation due
+                #  to catastrophic cancellation. This occurs when the data are nearly
+                #  identical. Results may be unreliable.
+                # or:
+                #  scipy.stats._axis_nan_policy.SmallSampleWarning: One or more sample
+                #  arguments is too small; all returned values will be NaN. See
+                #  documentation for sample size requirements.
+                if "Precision loss occurred in moment calculation" in str(e):
+                    return -1
+                elif "One or more sample arguments is too small" in str(e):
+                    return -1
+                else:
+                    raise
+
+
+class DiffTTest:
+    def __init__(
+        self,
+        data: DataLoader,
+        analysis_dir: str,
+        sub_dir_name: str,
+        p_value_threshold: float,
+        min_subsets_passing_threshold: int,
+        outlier_threshold: float,
+        test_alternative: str,  # Options are: {'two-sided', 'less', 'greater'}
+    ):
+        self.data = data
+        self.analysis_dir = analysis_dir
+        self.sub_name = sub_dir_name
+        self.threshold = p_value_threshold
+        self.min_count = min_subsets_passing_threshold
+        self.outliers = outlier_threshold
+        self.test = ttest_1samp
+        self.test_kwargs = dict(nan_policy="raise", alternative=test_alternative)
+        self.results = None
+
+    def run(
+        self, llm: Nickname, aggregators: list[AggregatorOption]
+    ) -> list[PairedMetricID]:
+        self.results, good_paired_p_values = {}, []
+        for paired_id in PairedMetricID.yield_all(aggregators):
+            if self._do_paired_run(llm, paired_id):
+                good_paired_p_values.append(paired_id)
+        file_path = os.path.join(self.analysis_dir, self.sub_name, llm + ".csv")
+        pd.DataFrame(self.results).to_csv(ensure_path(file_path), index=False)
+        self.results = None
+        return good_paired_p_values
+
+    def _do_paired_run(self, llm: Nickname, paired_id: PairedMetricID) -> bool:
+        paired_name = paired_metric_as_string(paired_id, add_agg=True)
+        self.results.setdefault("Name", []).append(paired_name)
+        # Add dummy value for missing BASELINE subset.
+        self.results.setdefault(AccordSubset.BASELINE.value, []).append(-1)
+
+        df = self.data.make_paired_df(llm, paired_id)
+        count = 0
+        for subset, group_df in df.groupby(by="Subset"):
+            diff = self._reject_outliers(group_df["PairedMetric"].tolist())
+            p_value = self._run_with_caught_warnings(diff)
+            if 0 < p_value < self.threshold:
+                count += 1
+            self.results.setdefault(subset, []).append(p_value)
+        return count >= self.min_count
+
+    def _reject_outliers(self, diff) -> list[float]:
+        if self.outliers <= 0:
+            return diff
+        diff = np.array(diff)
+        return diff[compute_outlier_mask(diff, self.outliers)].tolist()
+
+    def _run_with_caught_warnings(self, diff: list[float]) -> float:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            try:
+                return self.test(diff, popmean=0, **self.test_kwargs).pvalue
             except RuntimeWarning as e:
                 # This is to catch:
                 #  RuntimeWarning: Precision loss occurred in moment calculation due
@@ -610,7 +789,7 @@ class FactualityAnalyzer(Analyzer):
             binary_column_name="Factuality",
             binary_options=("Factual", "Anti-Factual"),
         )
-        self.t_tests = TTest(
+        self.metric_t_tests = BinaryTTest(
             data=data,
             analysis_dir=self.analysis_dir,
             p_value_threshold=self.cfg.p_value_threshold,
@@ -620,17 +799,29 @@ class FactualityAnalyzer(Analyzer):
             binary_options=("Factual", "Anti-Factual"),
             test_type="relative",
             test_alternative="less" if self.cfg.flip_logprobs else "greater",
+            include_paired=False,
+        )
+        self.paired_t_tests = DiffTTest(
+            data=data,
+            analysis_dir=self.analysis_dir,
+            sub_dir_name="Factuality-Diff",
+            p_value_threshold=self.cfg.p_value_threshold,
+            min_subsets_passing_threshold=self.cfg.min_subsets_passing_threshold,
+            outlier_threshold=self.cfg.outlier_threshold,
+            test_alternative="less" if self.cfg.flip_logprobs else "greater",
         )
 
     def run(self, nickname: Nickname):
         self.print("        Running t-tests...")
-        selection = self.t_tests.run(nickname, self.cfg.aggregators)
+        metrics, _ = self.metric_t_tests.run(nickname, self.cfg.aggregators)
+        paired = self.paired_t_tests.run(nickname, self.cfg.aggregators)
         self.print("        Plotting select histograms...")
-        self.histograms.make_select(nickname, selection)
+        self.histograms.make_select(nickname, metrics)
         self.print("        Plotting select diff violins...")
-        self.diff_violins.make_select(nickname, selection)
+        self.diff_violins.make_metric_select(nickname, metrics)
+        self.diff_violins.make_paired_select(nickname, paired)
         self.print("        Plotting select binary violins...")
-        self.binary_violins.make_select(nickname, selection)
+        self.binary_violins.make_metric_select(nickname, metrics)
         self.print("        Done.")
 
 
@@ -644,7 +835,7 @@ class CorrectnessAnalyzer(Analyzer):
             binary_column_name="Correctness",
             binary_options=("True", "False"),
         )
-        self.t_tests = TTest(
+        self.t_tests = BinaryTTest(
             data=data,
             analysis_dir=self.analysis_dir,
             p_value_threshold=self.cfg.p_value_threshold,
@@ -654,13 +845,15 @@ class CorrectnessAnalyzer(Analyzer):
             binary_options=("True", "False"),
             test_type="independent",
             test_alternative="less" if self.cfg.flip_logprobs else "greater",
+            include_paired=True,
         )
 
     def run(self, nickname: Nickname):
         self.print("        Running t-tests...")
-        selection = self.t_tests.run(nickname, self.cfg.aggregators)
+        metrics, paired = self.t_tests.run(nickname, self.cfg.aggregators)
         self.print("        Plotting select violins...")
-        self.violins.make_select(nickname, selection)
+        self.violins.make_metric_select(nickname, metrics)
+        self.violins.make_paired_select(nickname, paired)
         self.print("        Done.")
 
 

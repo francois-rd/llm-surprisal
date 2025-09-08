@@ -9,6 +9,7 @@ from .base import (
     AccordRelation,
     AccordStatement,
     AccordStatementID,
+    AccordStatementKey,
     AccordSurfaceForms,
     AccordTerm,
     CsqaID,
@@ -30,6 +31,9 @@ from .metric import (
     RankSubSubType,
     SurprisalSubType,
     SurprisalSubSubType,
+    PairedAccordMetrics,
+    PairedMetricType,
+    PairedMetricID,
 )
 from .surfacer import (
     AccordInstanceSurfacer,

@@ -7,6 +7,7 @@ AccordTerm = str
 AccordID = str
 AccordCaseID = int
 AccordStatementID = str
+AccordStatementKey = tuple[AccordTerm, AccordTerm, AccordRelation]
 CsqaID = str
 
 
@@ -42,6 +43,9 @@ class AccordStatement:
     source_term: AccordTerm
     target_term: AccordTerm
     relation_type: AccordRelation
+
+    def to_key(self) -> AccordStatementKey:
+        return self.source_term, self.target_term, self.relation_type
 
 
 @dataclass

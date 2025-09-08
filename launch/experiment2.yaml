@@ -4,14 +4,14 @@ checkpoint_frequency: 0.1
 chosen_only_logprob: true
 trim_inference_logprobs: true
 verbose: true
-invert: true
+invert: false
 system_prompt_id: simple
 system_prompt:
   simple-baseline: >-
     You are a helpful assistant in a knowledge verification process.
   simple: >-
     You are a helpful assistant in a reasoning task.
-user_template_id: inverted-accord #accord
+user_template_id: accord
 user_template:
   accord-baseline: >-
     Answer the following multiple-choice question with the label (one of: "A", "B",
