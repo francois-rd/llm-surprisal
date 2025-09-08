@@ -31,6 +31,22 @@ from .base import AccordSubset, Config
 from .pre_analysis import LogprobDataclass
 
 
+def all_category_orders() -> dict[str, list]:
+    return {
+        "Subset": [subset.value for subset in AccordSubset],
+        "Factuality": ["Factual", "Anti-Factual"],
+        "Correctness": ["True", "False"],
+        "ReasoningHops": list(range(max(s.value for s in AccordSubset) + 1)),
+        "Distractors": [None] + list(range(max(s.value for s in AccordSubset))),
+        "Legend": [
+            "Factual, True",
+            "Anti-Factual, True",
+            "Factual, False",
+            "Anti-Factual, False",
+        ],
+    }
+
+
 def metric_as_string(metric_id: MetricID, add_agg: bool = False) -> str:
     if metric_id.metric.uses_aggregator() and add_agg:
         sub_title = f"_{metric_id.agg.value.title()}"
@@ -50,7 +66,7 @@ def paired_metric_as_string(
     return f"{prefix}{PairedAccordMetrics.as_attribute_name(paired_id)}{suffix}"
 
 
-def factuality_diff_by_subsets(group_df):
+def factuality_diff_fn(group_df):
     af = group_df[group_df["Factuality"] == "Anti-Factual"]
     if af.empty:  # This is the case for subset 0 (i.e., the baseline).
         return None
@@ -58,9 +74,9 @@ def factuality_diff_by_subsets(group_df):
     return f - af["Metric"].tolist()[0]
 
 
-def as_factuality_diff(df: pd.DataFrame) -> pd.DataFrame:
-    grouped = df.groupby(by=["GroupID", "Subset"])
-    result = grouped.apply(factuality_diff_by_subsets, include_groups=False)
+def as_factuality_diff(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    grouped = df.groupby(by=["GroupID", col])
+    result = grouped.apply(factuality_diff_fn, include_groups=False)
     return result.reset_index().rename(columns={0: "Diff"})
 
 
@@ -167,8 +183,8 @@ class DataLoader:
         )
 
 
-def make_plot_path(plots_dir: str, main_type: str, llm: Nickname, sub_type: str) -> str:
-    base_path = os.path.join(plots_dir, main_type, llm, sub_type)
+def make_path(root_dir: str, main_type: str, llm: Nickname, sub_type: str) -> str:
+    base_path = os.path.join(root_dir, main_type, llm, sub_type)
     return ensure_path(base_path, is_dir=True)
 
 
@@ -230,27 +246,28 @@ class HistogramMaker:
         self.plots_dir = plots_dir
         self.data = data
 
-    def make_select(self, llm: Nickname, selection: list[MetricID]) -> None:
+    def make_select(
+        self, llm: Nickname, facet_col: str, selection: list[MetricID]
+    ) -> None:
         for metric_id in selection:
             df = self.data.make_metric_df(llm, metric_id)
-            self._do_make_factuality(df, llm, metric_id)
-            self._do_make_diff(df, llm, metric_id)
+            self._do_make_factuality(df, llm, facet_col, metric_id)
+            self._do_make_diff(df, llm, facet_col, metric_id)
 
-    def _do_make_factuality(self, df: pd.DataFrame, llm: Nickname, metric_id: MetricID):
+    def _do_make_factuality(
+        self, df: pd.DataFrame, llm: Nickname, facet_col: str, metric_id: MetricID
+    ):
         fig = px.histogram(
             data_frame=df,
             x="Metric",
             barmode="overlay",
             histnorm="percent",
             color="Factuality",
-            facet_col="Subset",
+            facet_col=facet_col,
             facet_col_wrap=3,
             facet_row_spacing=0.17,  # default is 0.07
             facet_col_spacing=0.03,  # default is 0.03
-            category_orders={
-                "Subset": [subset.value for subset in AccordSubset],
-                "Factuality": ["Factual", "Anti-Factual"],
-            },
+            category_orders=all_category_orders(),
             template="simple_white",
             width=700,  # default is 700
             height=500,  # default is 500
@@ -267,19 +284,21 @@ class HistogramMaker:
             x_label=f"{metric_id.metric.value.title()}{sub_label}",
             y_label="Histogram (%)",
         )
-        plot_path = make_plot_path(self.plots_dir, "histogram", llm, "Factuality")
-        save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
+        path = make_path(self.plots_dir, "histogram", llm, f"Factuality-{facet_col}")
+        save_figure(fig, path, metric_as_string(metric_id, add_agg=True))
 
-    def _do_make_diff(self, df: pd.DataFrame, llm: Nickname, metric_id: MetricID):
+    def _do_make_diff(
+        self, df: pd.DataFrame, llm: Nickname, facet_col: str, metric_id: MetricID
+    ):
         fig = px.histogram(
-            data_frame=as_factuality_diff(df),
+            data_frame=as_factuality_diff(df, facet_col),
             x="Diff",
             histnorm="percent",
-            facet_col="Subset",
+            facet_col=facet_col,
             facet_col_wrap=3,
             facet_row_spacing=0.17,  # default is 0.07
             facet_col_spacing=0.03,  # default is 0.03
-            category_orders={"Subset": [subset.value for subset in AccordSubset]},
+            category_orders=all_category_orders(),
             template="simple_white",
             width=700,  # default is 700
             height=500,  # default is 500
@@ -299,8 +318,8 @@ class HistogramMaker:
             y_label="Histogram (%)",
         )
         fig.update_traces(marker_color="green")
-        plot_path = make_plot_path(self.plots_dir, "histogram", llm, "Diff")
-        save_figure(fig, plot_path, metric_as_string(metric_id, add_agg=True))
+        path = make_path(self.plots_dir, "histogram", llm, f"Diff-{facet_col}")
+        save_figure(fig, path, metric_as_string(metric_id, add_agg=True))
 
 
 class DiffViolinMaker:
@@ -309,25 +328,28 @@ class DiffViolinMaker:
         self.data = data
         self.outliers = outlier_threshold
 
-    def make_metric_select(self, llm: Nickname, selection: list[MetricID]) -> None:
+    def make_metric_select(
+        self, llm: Nickname, color_col: str, selection: list[MetricID]
+    ) -> None:
         for metric_id in selection:
-            df = as_factuality_diff(self.data.make_metric_df(llm, metric_id))
-            df = df[df["Subset"] != 0]
-            kwargs = self._get_metric_kwargs(metric_id)
+            df = as_factuality_diff(self.data.make_metric_df(llm, metric_id), color_col)
+            if color_col == "Subset":
+                df = df[df["Subset"] != AccordSubset.BASELINE.value]
+            kwargs = self._get_metric_kwargs(color_col, metric_id)
             self._do_make(df, llm, reject_outliers=False, **kwargs)
             self._do_make(df, llm, reject_outliers=True, **kwargs)
 
     def make_paired_select(
-        self, llm: Nickname, selection: list[PairedMetricID]
+        self, llm: Nickname, color_col: str, selection: list[PairedMetricID]
     ) -> None:
         for paired_id in selection:
             df = self.data.make_paired_df(llm, paired_id, False)
-            kwargs = self._get_paired_kwargs(paired_id)
+            kwargs = self._get_paired_kwargs(color_col, paired_id)
             self._do_make(df, llm, reject_outliers=False, **kwargs)
             self._do_make(df, llm, reject_outliers=True, **kwargs)
 
     @staticmethod
-    def _get_metric_kwargs(metric_id: MetricID) -> dict[str, str]:
+    def _get_metric_kwargs(color_col: str, metric_id: MetricID) -> dict[str, str]:
         if metric_id.metric.uses_aggregator():
             sub_label = f": {metric_id.agg.value.lower()}(logprobs)"
         else:
@@ -336,10 +358,11 @@ class DiffViolinMaker:
             y_col="Diff",
             y_axis_sub_title=f"{metric_id.metric.value.title()}{sub_label}",
             file_base_name=metric_as_string(metric_id, add_agg=True),
+            color_col=color_col,
         )
 
     @staticmethod
-    def _get_paired_kwargs(paired_id: PairedMetricID) -> dict[str, str]:
+    def _get_paired_kwargs(color_col: str, paired_id: PairedMetricID) -> dict[str, str]:
         sub_label = f": {paired_id.agg.value.lower()}(logprobs)"
         return dict(
             y_col="PairedMetric",
@@ -347,6 +370,7 @@ class DiffViolinMaker:
             file_base_name=paired_metric_as_string(
                 paired_id, opposite_correctness=False, add_agg=True
             ),
+            color_col=color_col,
         )
 
     def _reject_outliers(self, df: pd.DataFrame, col: str) -> pd.DataFrame:
@@ -362,19 +386,14 @@ class DiffViolinMaker:
         y_col: str,
         y_axis_sub_title: str,
         file_base_name: str,
+        color_col: str,
     ):
         fig = px.violin(
             data_frame=self._reject_outliers(df, y_col) if reject_outliers else df,
             y=y_col,
-            color="Subset",
+            color=color_col,
             box=True,
-            category_orders={
-                "Subset": [
-                    subset.value
-                    for subset in AccordSubset
-                    if subset != AccordSubset.BASELINE
-                ]
-            },
+            category_orders=all_category_orders(),
             template="simple_white",
             width=700,  # default is 700
             height=500,  # default is 500
@@ -390,8 +409,8 @@ class DiffViolinMaker:
         fig.update_traces(meanline_visible=True)
         fig.update_xaxes(showticklabels=False)  # TODO: This isn't doing anything?
         sub_type = "Diff-No-Outliers" if reject_outliers else "Diff-All"
-        plot_path = make_plot_path(self.plots_dir, "violin", llm, sub_type)
-        save_figure(fig, plot_path, file_base_name)
+        path = make_path(self.plots_dir, "violin", llm, f"{sub_type}-{color_col}")
+        save_figure(fig, path, file_base_name)
 
 
 class BinaryViolinMaker:
@@ -409,24 +428,27 @@ class BinaryViolinMaker:
         self.binary = binary_column_name
         self.options = binary_options
 
-    def make_metric_select(self, llm: Nickname, selection: list[MetricID]) -> None:
+    def make_metric_select(
+        self, llm: Nickname, color_col: str, selection: list[MetricID]
+    ) -> None:
         for metric_id in selection:
             df = self.data.make_metric_df(llm, metric_id)
             df["Subset"] = df["Subset"].apply(lambda x: AccordSubset(x).name)
-            kwargs = self._get_metric_kwargs(metric_id)
+            kwargs = self._get_metric_kwargs(color_col, metric_id)
             self._do_make(df, llm, reject_outliers=False, **kwargs)
             self._do_make(df, llm, reject_outliers=True, **kwargs)
 
     def make_paired_select(
         self,
         llm: Nickname,
+        color_col: str,
         selection: list[PairedMetricID],
         opposite_correctness: bool,
     ) -> None:
         for paired_id in selection:
             df = self.data.make_paired_df(llm, paired_id, opposite_correctness)
             df["Subset"] = df["Subset"].apply(lambda x: AccordSubset(x).name)
-            kwargs = self._get_paired_kwargs(paired_id, opposite_correctness)
+            kwargs = self._get_paired_kwargs(color_col, paired_id, opposite_correctness)
             self._do_make(df, llm, reject_outliers=False, **kwargs)
             self._do_make(df, llm, reject_outliers=True, **kwargs)
 
@@ -441,7 +463,7 @@ class BinaryViolinMaker:
         return pd.concat(dfs)
 
     @staticmethod
-    def _get_metric_kwargs(metric_id: MetricID) -> dict[str, str]:
+    def _get_metric_kwargs(color_col: str, metric_id: MetricID) -> dict[str, str]:
         if metric_id.metric.uses_aggregator():
             sub_label = f": {metric_id.agg.value.lower()}(logprobs)"
         else:
@@ -454,11 +476,12 @@ class BinaryViolinMaker:
                 min(s.value for s in AccordSubset) - 1,
                 max(s.value for s in AccordSubset) + 1,
             ],
+            color_col=color_col,
         )
 
     @staticmethod
     def _get_paired_kwargs(
-        paired_id: PairedMetricID, opposite_correctness: bool
+        color_col: str, paired_id: PairedMetricID, opposite_correctness: bool
     ) -> dict[str, str]:
         sub_label = f": {paired_id.agg.value.lower()}(logprobs)"
         return dict(
@@ -471,6 +494,7 @@ class BinaryViolinMaker:
                 min(s.value for s in AccordSubset) - 1,
                 max(s.value for s in AccordSubset),  # Lack of BASELINE means no +1.
             ],
+            color_col=color_col,
         )
 
     def _do_make(
@@ -482,29 +506,32 @@ class BinaryViolinMaker:
         y_axis_title: str,
         file_base_name: str,
         x_range: tuple[int, int],
+        color_col: str,
     ):
         df = self._reject_outliers(df, y_col) if reject_outliers else df
         fig = go.Figure()
         for option in self.options:
-            self._add_trace(fig, df, option, y_col)
+            self._add_trace(fig, df, option, color_col, y_col)
 
         fig.update_layout(
             violingap=0,
             violinmode="overlay",
-            xaxis=dict(title="ACCORD Subset", range=x_range),
+            xaxis=dict(title=f"ACCORD {color_col}", range=x_range),
             yaxis=dict(title=y_axis_title),
             margin=dict(l=0, r=0, b=60, t=0),
             template="simple_white",  # TODO: For camera ready, Correctness should not have same color as Factuality.
             legend=dict(title=self.binary),
         )
         sub_type = self.binary + ("-No-Outliers" if reject_outliers else "-All")
-        plot_path = make_plot_path(self.plots_dir, "violin", llm, sub_type)
-        save_figure(fig, plot_path, file_base_name)
+        path = make_path(self.plots_dir, "violin", llm, f"{sub_type}-{color_col}")
+        save_figure(fig, path, file_base_name)
 
-    def _add_trace(self, fig, df: pd.DataFrame, option: str, y_col: str) -> None:
+    def _add_trace(
+        self, fig, df: pd.DataFrame, option: str, color_col: str, y_col: str
+    ) -> None:
         fig.add_trace(
             go.Violin(
-                x=df["Subset"][df[self.binary] == option],
+                x=df[color_col][df[self.binary] == option],
                 y=df[y_col][df[self.binary] == option],
                 box=dict(visible=True),
                 legendgroup=option,
@@ -521,7 +548,10 @@ class ScatterplotMaker:
         self.data = data
 
     def make_select(
-        self, llm: Nickname, selection_pairs: list[tuple[MetricID, MetricID]]
+        self,
+        llm: Nickname,
+        facet_col: str,
+        selection_pairs: list[tuple[MetricID, MetricID]],
     ) -> None:
         colors = ["Factuality", "Correctness", "Legend"]
         for pair in selection_pairs:
@@ -530,7 +560,7 @@ class ScatterplotMaker:
                 lambda x: x["Factuality"] + ", " + x["Correctness"], axis=1
             )
             for color in colors:
-                self._do_make(df, pair[0], pair[1], llm, color)
+                self._do_make(df, pair[0], pair[1], llm, facet_col, color)
 
     def _do_make(
         self,
@@ -538,6 +568,7 @@ class ScatterplotMaker:
         metric_id_x: MetricID,
         metric_id_y: MetricID,
         llm: Nickname,
+        facet_col: str,
         color: str,
     ) -> None:
         fig = px.scatter(
@@ -545,21 +576,11 @@ class ScatterplotMaker:
             x=f"Metric1",
             y=f"Metric2",
             color=color,
-            facet_col="Subset",
+            facet_col=facet_col,
             facet_col_wrap=3,
             facet_row_spacing=0.17,  # default is 0.07
             facet_col_spacing=0.03,  # default is 0.03
-            category_orders={
-                "Subset": [subset.value for subset in AccordSubset],
-                "Correctness": ["True", "False"],
-                "Factuality": ["Factual", "Anti-Factual"],
-                "Legend": [
-                    "Factual, True",
-                    "Anti-Factual, True",
-                    "Factual, False",
-                    "Anti-Factual, False",
-                ],
-            },
+            category_orders=all_category_orders(),
             template="simple_white",
             width=700,  # default is 700
             height=500,  # default is 500
@@ -580,10 +601,10 @@ class ScatterplotMaker:
             y_label=f"{metric_id_y.metric.value.title()}{sub_label_y}",
         )
         fig.update_traces(marker=dict(opacity=0.25))
-        plot_path = make_plot_path(self.plots_dir, "scatterplot", llm, color)
+        path = make_path(self.plots_dir, "scatterplot", llm, f"{color}-{facet_col}")
         metric_x_name = metric_as_string(metric_id_x, add_agg=True)
         metric_y_name = metric_as_string(metric_id_y, add_agg=True)
-        save_figure(fig, plot_path, f"{metric_x_name}_{metric_y_name}")
+        save_figure(fig, path, f"{metric_x_name}_{metric_y_name}")
 
 
 @dataclass
@@ -629,7 +650,7 @@ class BinaryTTest:
         self.results = None
 
     def run(
-        self, llm: Nickname, aggregators: list[AggregatorOption]
+        self, llm: Nickname, group_col: str, aggregators: list[AggregatorOption]
     ) -> BinaryTTestSelection:
         if self.include_paired:
             selection = BinaryTTestSelection([], [], [])
@@ -637,47 +658,54 @@ class BinaryTTest:
             selection = BinaryTTestSelection([], None, None)
         self.results = {}
         for metric_id in MetricID.yield_all(aggregators):
-            if self._do_metric_run(llm, metric_id):
+            if self._do_metric_run(llm, group_col, metric_id):
                 selection.metrics.append(metric_id)
         if self.include_paired:
             for paired_id in PairedMetricID.yield_all(aggregators):
-                if self._do_paired_run(llm, paired_id, opposite_correctness=False):
+                if self._do_paired_run(llm, group_col, paired_id, False):
                     selection.paired.append(paired_id)
             for paired_id in PairedMetricID.yield_all(aggregators):
-                if self._do_paired_run(llm, paired_id, opposite_correctness=True):
+                if self._do_paired_run(llm, group_col, paired_id, True):
                     selection.paired_opp_only.append(paired_id)
-        file_path = os.path.join(self.analysis_dir, self.binary, llm + ".csv")
-        pd.DataFrame(self.results).to_csv(ensure_path(file_path), index=False)
+        path = os.path.join(self.analysis_dir, self.binary, group_col, llm + ".csv")
+        pd.DataFrame(self.results).to_csv(ensure_path(path), index=False)
         self.results = None
         return selection
 
-    def _do_metric_run(self, llm: Nickname, metric_id: MetricID) -> bool:
+    def _do_metric_run(
+        self, llm: Nickname, group_col: str, metric_id: MetricID
+    ) -> bool:
         metric_name = metric_as_string(metric_id, add_agg=True)
         self.results.setdefault("Name", []).append(metric_name)
         df = self.data.make_metric_df(llm, metric_id)
         count = 0
-        for subset, group_df in df.groupby(by="Subset"):
+        for group_id, group_df in df.groupby(by=group_col):
             p_value = self._run_test(group_df, "Metric")
             if 0 < p_value < self.threshold:
                 count += 1
-            self.results.setdefault(subset, []).append(p_value)
+            self.results.setdefault(group_id, []).append(p_value)
         return count >= self.min_count
 
     def _do_paired_run(
-        self, llm: Nickname, paired_id: PairedMetricID, opposite_correctness: bool
+        self,
+        llm: Nickname,
+        group_col: str,
+        paired_id: PairedMetricID,
+        opposite_correctness: bool,
     ) -> bool:
         name = paired_metric_as_string(paired_id, opposite_correctness, add_agg=True)
         self.results.setdefault("Name", []).append(name)
-        # Add dummy value for missing BASELINE subset.
-        self.results.setdefault(AccordSubset.BASELINE.value, []).append(-1)
+        # Add dummy value for missing BASELINE subset or reasoning hop pairs.
+        if group_col in ["Subset", "ReasoningHops"]:
+            self.results.setdefault(AccordSubset.BASELINE.value, []).append(-1)
 
         df = self.data.make_paired_df(llm, paired_id, opposite_correctness)
         count = 0
-        for subset, group_df in df.groupby(by="Subset"):
+        for group_id, group_df in df.groupby(by=group_col):
             p_value = self._run_test(group_df, "PairedMetric")
             if 0 < p_value < self.threshold:
                 count += 1
-            self.results.setdefault(subset, []).append(p_value)
+            self.results.setdefault(group_id, []).append(p_value)
         return count >= self.min_count
 
     def _reject_outliers(self, a, b) -> tuple[list[float], list[float]]:
@@ -753,31 +781,34 @@ class DiffTTest:
         self.results = None
 
     def run(
-        self, llm: Nickname, aggregators: list[AggregatorOption]
+        self, llm: Nickname, group_col: str, aggregators: list[AggregatorOption]
     ) -> list[PairedMetricID]:
         self.results, good_paired_p_values = {}, []
         for paired_id in PairedMetricID.yield_all(aggregators):
-            if self._do_paired_run(llm, paired_id):
+            if self._do_paired_run(llm, group_col, paired_id):
                 good_paired_p_values.append(paired_id)
-        file_path = os.path.join(self.analysis_dir, self.sub_name, llm + ".csv")
-        pd.DataFrame(self.results).to_csv(ensure_path(file_path), index=False)
+        path = os.path.join(self.analysis_dir, self.sub_name, group_col, llm + ".csv")
+        pd.DataFrame(self.results).to_csv(ensure_path(path), index=False)
         self.results = None
         return good_paired_p_values
 
-    def _do_paired_run(self, llm: Nickname, paired_id: PairedMetricID) -> bool:
+    def _do_paired_run(
+        self, llm: Nickname, group_col: str, paired_id: PairedMetricID
+    ) -> bool:
         paired_name = paired_metric_as_string(paired_id, False, add_agg=True)
         self.results.setdefault("Name", []).append(paired_name)
         # Add dummy value for missing BASELINE subset.
-        self.results.setdefault(AccordSubset.BASELINE.value, []).append(-1)
+        if group_col == "Subset":
+            self.results.setdefault(AccordSubset.BASELINE.value, []).append(-1)
 
         df = self.data.make_paired_df(llm, paired_id, False)
         count = 0
-        for subset, group_df in df.groupby(by="Subset"):
+        for group_id, group_df in df.groupby(by=group_col):
             diff = self._reject_outliers(group_df["PairedMetric"].tolist())
             p_value = self._run_with_caught_warnings(diff)
             if 0 < p_value < self.threshold:
                 count += 1
-            self.results.setdefault(subset, []).append(p_value)
+            self.results.setdefault(group_id, []).append(p_value)
         return count >= self.min_count
 
     def _reject_outliers(self, diff) -> list[float]:
@@ -828,15 +859,11 @@ class AccuracyAnalyzer(Analyzer):
     def run(self, nickname: Nickname):
         # TODO: Make pre-analysis work on all Aggregators (and improve the Agg dataclass regardless)
         df = self.data.make_df(nickname, AggregatorOption.MIN)
-        self._do_run(df, nickname, "Subset")
-        self._do_run(df, nickname, "ReasoningHops")
-        self._do_run(df.dropna(), nickname, "Distractors")
-
-    def _do_run(self, df: pd.DataFrame, llm: Nickname, col: str) -> None:
-        result = df.groupby(by=[col, "Factuality"]).apply(self._get_acc)
-        df = result.reset_index().rename(columns={0: "Accuracy"})
-        file_path = os.path.join(self.analysis_dir, col, llm + ".csv")
-        pd.DataFrame(df).to_csv(ensure_path(file_path), index=False)
+        for group_col in self.cfg.analysis_groups:
+            result = df.groupby(by=[group_col, "Factuality"]).apply(self._get_acc)
+            result = result.reset_index().rename(columns={0: "Accuracy"})
+            file_path = os.path.join(self.analysis_dir, group_col, nickname + ".csv")
+            pd.DataFrame(result).to_csv(ensure_path(file_path), index=False)
 
     @staticmethod
     def _get_acc(group_df):
@@ -882,17 +909,19 @@ class FactualityAnalyzer(Analyzer):
         )
 
     def run(self, nickname: Nickname):
-        self.print("        Running t-tests...")
-        metrics = self.metric_t_tests.run(nickname, self.cfg.aggregators).metrics
-        paired = self.paired_t_tests.run(nickname, self.cfg.aggregators)
-        self.print("        Plotting select histograms...")
-        self.histograms.make_select(nickname, metrics)
-        self.print("        Plotting select diff violins...")
-        self.diff_violins.make_metric_select(nickname, metrics)
-        self.diff_violins.make_paired_select(nickname, paired)
-        self.print("        Plotting select binary violins...")
-        self.binary_violins.make_metric_select(nickname, metrics)
-        self.print("        Done.")
+        for col in self.cfg.analysis_groups:
+            self.print(f"        Analyzing group: {col}...")
+            self.print("            Running t-tests...")
+            selection = self.metric_t_tests.run(nickname, col, self.cfg.aggregators)
+            paired = self.paired_t_tests.run(nickname, col, self.cfg.aggregators)
+            self.print("            Plotting select histograms...")
+            self.histograms.make_select(nickname, col, selection.metrics)
+            self.print("            Plotting select diff violins...")
+            self.diff_violins.make_metric_select(nickname, col, selection.metrics)
+            self.diff_violins.make_paired_select(nickname, col, paired)
+            self.print("            Plotting select binary violins...")
+            self.binary_violins.make_metric_select(nickname, col, selection.metrics)
+            self.print("        Done.")
 
 
 class CorrectnessAnalyzer(Analyzer):
@@ -919,13 +948,17 @@ class CorrectnessAnalyzer(Analyzer):
         )
 
     def run(self, nickname: Nickname):
-        self.print("        Running t-tests...")
-        selection = self.t_tests.run(nickname, self.cfg.aggregators)
-        self.print("        Plotting select violins...")
-        self.violins.make_metric_select(nickname, selection.metrics)
-        self.violins.make_paired_select(nickname, selection.paired, False)
-        self.violins.make_paired_select(nickname, selection.paired_opp_only, True)
-        self.print("        Done.")
+        for col in self.cfg.analysis_groups:
+            self.print(f"        Analyzing group: {col}...")
+            self.print("            Running t-tests...")
+            selection = self.t_tests.run(nickname, col, self.cfg.aggregators)
+            self.print("            Plotting select violins...")
+            self.violins.make_metric_select(nickname, col, selection.metrics)
+            self.violins.make_paired_select(nickname, col, selection.paired, False)
+            self.violins.make_paired_select(
+                nickname, col, selection.paired_opp_only, True
+            )
+            self.print("        Done.")
 
 
 # Scatter plot y-options:
@@ -1013,9 +1046,11 @@ class CrossAnalyzer(Analyzer):
         )
 
     def run(self, nickname: Nickname):
-        self.print("        Plotting select scatter plots...")
-        self.scatter_plots.make_select(nickname, self.selection_pairs)
-        self.print("        Done.")
+        for col in self.cfg.analysis_groups:
+            self.print(f"        Analyzing group: {col}...")
+            self.print("            Plotting select scatter plots...")
+            self.scatter_plots.make_select(nickname, col, self.selection_pairs)
+            self.print("        Done.")
 
 
 @command(name="exp.2.analysis")

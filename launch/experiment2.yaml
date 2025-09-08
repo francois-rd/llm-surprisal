@@ -37,7 +37,15 @@ user_template:
     label (one of: "A", "B", "C", "D", or "E") of the choice that best answers the
     question. Do not output anything else.
 user_template_indicator: Do not output anything else
-analysis_llms: []
+analysis_llms:
+  - Llama-3.2-3B-Instruct
+  - Llama-3.3-70B-Instruct
+  - Meta-Llama-3.1-8B-Instruct
+  - Qwen2.5-14B-Instruct
+analysis_groups:
+  - Subset
+  - ReasoningHops
+  - Distractors
 aggregators:
 - SUM
 - MEAN

@@ -68,6 +68,7 @@ class Config:
     user_template: dict[str, str] = field(default_factory=dict)
     user_template_indicator: str = "Do not output anything else."
     analysis_llms: list[Nickname] = field(default_factory=list)
+    analysis_groups: list[str] = field(default_factory=lambda: ["Subset"])
     aggregators: list[AggregatorOption] = field(
         default_factory=lambda: [
             AggregatorOption.FIRST,
