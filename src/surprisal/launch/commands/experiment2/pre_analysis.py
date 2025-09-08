@@ -62,6 +62,8 @@ class _CurrentData:
 @dataclass
 class LogprobDataclass:
     accord_group_id: str
+    reasoning_hops: int
+    distractors: int | None
     factuality: str
     accord_label: AccordLabel
     csqa_label: AccordLabel
@@ -89,6 +91,8 @@ class LogprobData:
         self.accord_group_id: str = current_data.meta_data.id[:-2]
 
         self.factuality: str = self._get_factuality(prompt_data.prompt_type)
+        self.reasoning_hops = self._get_reasoning_hops(current_data)
+        self.distractors = self._get_distractors(subset)
         self.forced_label: AccordLabel = prompt_data.label
         self.accord_label: AccordLabel = current_data.meta_data.label
         self.csqa_label: AccordLabel = prompt_data.additional_data["csqa_label"]
@@ -128,6 +132,16 @@ class LogprobData:
     @staticmethod
     def _get_factuality(prompt_type: PromptType) -> str:
         return "Factual" if prompt_type == PromptType.F else "Anti-Factual"
+
+    @staticmethod
+    def _get_reasoning_hops(current_data: _CurrentData) -> int:
+        reduction_cases = current_data.meta_data.reduction_cases
+        return 0 if reduction_cases is None else len(reduction_cases) + 1
+
+    def _get_distractors(self, subset: AccordSubset) -> int | None:
+        if subset == AccordSubset.BASELINE:
+            return None
+        return subset.value - self.reasoning_hops
 
     def _aggregate_statements(self, current_data: _CurrentData) -> tuple[dict, dict]:
         if current_data.logprob_of_statements is None:
@@ -219,6 +233,8 @@ class LogprobData:
         return LogprobDataclass(
             accord_group_id=self.accord_group_id,
             factuality=self.factuality,
+            reasoning_hops=self.reasoning_hops,
+            distractors=self.distractors,
             accord_label=self.accord_label,
             csqa_label=self.csqa_label,
             subset=self.subset,

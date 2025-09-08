@@ -95,16 +95,22 @@ class DataLoader:
         llm_data = self.data_by_llm.setdefault(llm, {})
         llm_data.setdefault("GroupID", []).append(data.accord_group_id)
         llm_data.setdefault("Factuality", []).append(data.factuality)
+        llm_data.setdefault("ReasoningHops", []).append(data.reasoning_hops)
+        llm_data.setdefault("Distractors", []).append(data.distractors)
         llm_data.setdefault("AccordLabel", []).append(data.accord_label)
         llm_data.setdefault("CsqaLabel", []).append(data.csqa_label)
         llm_data.setdefault("Subset", []).append(data.subset.value)
         llm_data.setdefault("DataID", []).append(self.id_counter)
 
+    def make_df(self, llm: Nickname, agg: AggregatorOption) -> pd.DataFrame:
+        df = pd.DataFrame(self.data_by_llm[llm.replace("/", "-")])
+        self._add_correctness(df, agg)
+        return df
+
     def make_metric_df(
         self, llm: Nickname, metric_id_1: MetricID, metric_id_2: MetricID | None = None
     ) -> pd.DataFrame:
-        df = pd.DataFrame(self.data_by_llm[llm.replace("/", "-")])
-        self._add_correctness(df, metric_id_1.agg)  # Agg choice is arbitrary here.
+        df = self.make_df(llm, metric_id_1.agg)  # Agg choice is arbitrary here.
         col_name = "Metric" if metric_id_2 is None else "Metric1"
         df[col_name] = df["DataID"].apply(
             lambda id_: self.data_by_id[id_].metrics.get(metric_id_1)
@@ -121,8 +127,7 @@ class DataLoader:
         paired_metric_id: PairedMetricID,
         keep_only_opposite_correctness: bool,
     ) -> pd.DataFrame:
-        df = pd.DataFrame(self.data_by_llm[llm.replace("/", "-")])
-        self._add_correctness(df, paired_metric_id.agg)
+        df = self.make_df(llm, paired_metric_id.agg)
         df["PairedMetric"] = df["DataID"].apply(self._get_paired_fn(paired_metric_id))
         if keep_only_opposite_correctness:
             df = self._keep_opposite_correctness(df)
@@ -815,6 +820,29 @@ class Analyzer:
         raise NotImplementedError
 
 
+class AccuracyAnalyzer(Analyzer):
+    def __init__(self, path: PathConfig, cfg: Config, data: DataLoader):
+        super().__init__(path, cfg)
+        self.data = data
+
+    def run(self, nickname: Nickname):
+        # TODO: Make pre-analysis work on all Aggregators (and improve the Agg dataclass regardless)
+        df = self.data.make_df(nickname, AggregatorOption.MIN)
+        self._do_run(df, nickname, "Subset")
+        self._do_run(df, nickname, "ReasoningHops")
+        self._do_run(df.dropna(), nickname, "Distractors")
+
+    def _do_run(self, df: pd.DataFrame, llm: Nickname, col: str) -> None:
+        result = df.groupby(by=[col, "Factuality"]).apply(self._get_acc)
+        df = result.reset_index().rename(columns={0: "Accuracy"})
+        file_path = os.path.join(self.analysis_dir, col, llm + ".csv")
+        pd.DataFrame(df).to_csv(ensure_path(file_path), index=False)
+
+    @staticmethod
+    def _get_acc(group_df):
+        return group_df["Correctness"].value_counts()["True"] / len(group_df)
+
+
 class FactualityAnalyzer(Analyzer):
     def __init__(self, path: PathConfig, cfg: Config, data: DataLoader):
         super().__init__(path, cfg)
@@ -1004,6 +1032,8 @@ class Experiment2Analysis:
         self.print("Done.")
         for nickname in self.cfg.analysis_llms:
             self.print("Analyzing results of model:", nickname)
+            self.print("    Running accuracy analysis...")
+            AccuracyAnalyzer(self.path, self.cfg, self.data).run(nickname)
             self.print("    Running factuality analysis...")
             FactualityAnalyzer(self.path, self.cfg, self.data).run(nickname)
             self.print("    Running correctness analysis...")
