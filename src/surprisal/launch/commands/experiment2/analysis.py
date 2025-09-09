@@ -118,15 +118,15 @@ class DataLoader:
         llm_data.setdefault("Subset", []).append(data.subset.value)
         llm_data.setdefault("DataID", []).append(self.id_counter)
 
-    def make_df(self, llm: Nickname, agg: AggregatorOption) -> pd.DataFrame:
+    def make_df(self, llm: Nickname) -> pd.DataFrame:
         df = pd.DataFrame(self.data_by_llm[llm.replace("/", "-")])
-        self._add_correctness(df, agg)
+        self._add_correctness(df)
         return df
 
     def make_metric_df(
         self, llm: Nickname, metric_id_1: MetricID, metric_id_2: MetricID | None = None
     ) -> pd.DataFrame:
-        df = self.make_df(llm, metric_id_1.agg)  # Agg choice is arbitrary here.
+        df = self.make_df(llm)
         col_name = "Metric" if metric_id_2 is None else "Metric1"
         df[col_name] = df["DataID"].apply(
             lambda id_: self.data_by_id[id_].metrics.get(metric_id_1)
@@ -143,7 +143,7 @@ class DataLoader:
         paired_metric_id: PairedMetricID,
         keep_only_opposite_correctness: bool,
     ) -> pd.DataFrame:
-        df = self.make_df(llm, paired_metric_id.agg)
+        df = self.make_df(llm)
         df["PairedMetric"] = df["DataID"].apply(self._get_paired_fn(paired_metric_id))
         if keep_only_opposite_correctness:
             df = self._keep_opposite_correctness(df)
@@ -167,7 +167,7 @@ class DataLoader:
                 keep.append(group_id)
         return df[df["GroupID"].isin(keep)]
 
-    def _add_correctness(self, df: pd.DataFrame, agg: AggregatorOption) -> None:
+    def _add_correctness(self, df: pd.DataFrame) -> None:
         # Correctness could definitely be moved to pre_analysis, but it doesn't take
         # long to compute (milliseconds), so there's no real harm putting it here.
         # Logic: The LLM is correct if the RANK of the FORCED label matching the ACCORD
@@ -176,7 +176,7 @@ class DataLoader:
             metric=MetricType.RANK,
             sub_metric=RankSubType.FORCED,
             sub_sub_metric=RankSubSubType.MATCHING_ACCORD,
-            agg=agg,
+            agg=AggregatorOption.FIRST,  # First is what will give true outcome.
         )
         df["Correctness"] = df["DataID"].apply(
             lambda id_: str(self.data_by_id[id_].metrics.get(correct_id) == 1)
@@ -857,8 +857,7 @@ class AccuracyAnalyzer(Analyzer):
         self.data = data
 
     def run(self, nickname: Nickname):
-        # TODO: Make pre-analysis work on all Aggregators (and improve the Agg dataclass regardless)
-        df = self.data.make_df(nickname, AggregatorOption.MIN)
+        df = self.data.make_df(nickname)
         for group_col in self.cfg.analysis_groups:
             result = df.groupby(by=[group_col, "Factuality"]).apply(self._get_acc)
             result = result.reset_index().rename(columns={0: "Accuracy"})

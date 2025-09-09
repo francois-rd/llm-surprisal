@@ -498,7 +498,9 @@ class Experiment2PreAnalysis:
                 accord_subset=subset,
                 pre_analysis_dir=self.out_dir,
                 flip_logprobs=self.cfg.flip_logprobs,
-                aggregators=self.cfg.aggregators,
+                # This makes pre-analysis produce data for all aggregators, which
+                # mean we don't have to redo this just to add analysis aggregators.
+                aggregators=[agg for agg in AggregatorOption],
             )
         self.print = ConditionalPrinter(self.cfg.verbose)
         self.data_by_llm = {}
