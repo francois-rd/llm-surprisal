@@ -227,6 +227,12 @@ class AccordMetrics:
         attr, agg = self.as_attribute_name(metric_id), metric_id.agg
         return getattr(self, attr) if agg is None else getattr(self, attr)[agg.value]
 
+    def compute_correctness(self) -> bool:
+        # The LLM is correct iff the token of the forced answer matching the
+        # ground truth label (the ACCORD label) is top ranked compared to all
+        # other forced answer labels.
+        return self.rank_forced_matching_accord[AggregatorOption.MIN.value] == 1
+
     @classmethod
     def from_data(
         cls,
@@ -445,41 +451,41 @@ class PairedAccordMetrics:
     @classmethod
     def from_data(
         cls,
-        factual_source_lps: dict[
+        factual_or_correct_source_lps: dict[
             tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
         ],
-        factual_target_lps: dict[
+        factual_or_correct_target_lps: dict[
             tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
         ],
-        anti_factual_source_lps: dict[
+        af_or_incorrect_source_lps: dict[
             tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
         ],
-        anti_factual_target_lps: dict[
+        af_or_incorrect_target_lps: dict[
             tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
         ],
     ) -> "PairedAccordMetrics":
-        sources = cls._pair_up(factual_source_lps, anti_factual_source_lps)
-        targets = cls._pair_up(factual_target_lps, anti_factual_target_lps)
-        combine = {agg: lps + targets[agg] for agg, lps in sources.items()}
+        source = cls._pair_up(factual_or_correct_source_lps, af_or_incorrect_source_lps)
+        target = cls._pair_up(factual_or_correct_target_lps, af_or_incorrect_target_lps)
+        combine = {agg: lps + target[agg] for agg, lps in source.items()}
         return PairedAccordMetrics(
-            paired_source=cls._aggregate(sources),
-            paired_target=cls._aggregate(targets),
+            paired_source=cls._aggregate(source),
+            paired_target=cls._aggregate(target),
             paired_statement=cls._aggregate(combine),
         )
 
     @staticmethod
     def _pair_up(
-        factual_lps: dict[
+        factual_or_correct_lps: dict[
             tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
         ],
-        anti_factual_lps: dict[
+        af_or_incorrect_lps: dict[
             tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
         ],
     ) -> dict[AggregatorOption, list[float]]:
         result = {}
-        for key, f_data in factual_lps.items():
-            for agg, af_lp in anti_factual_lps[key].items():
-                result.setdefault(agg, []).append(f_data[agg] - af_lp)
+        for key, f_or_c_data in factual_or_correct_lps.items():
+            for agg, af_or_i_lp in af_or_incorrect_lps[key].items():
+                result.setdefault(agg, []).append(f_or_c_data[agg] - af_or_i_lp)
         return result
 
     @staticmethod

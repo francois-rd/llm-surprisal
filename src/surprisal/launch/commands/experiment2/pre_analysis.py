@@ -69,7 +69,8 @@ class LogprobDataclass:
     csqa_label: AccordLabel
     subset: AccordSubset
     metrics: AccordMetrics
-    paired_metrics: PairedAccordMetrics | None = None
+    factuality_metrics: PairedAccordMetrics | None = None
+    correctness_metrics: PairedAccordMetrics | None = None
 
 
 class LogprobData:
@@ -198,37 +199,49 @@ class LogprobData:
     def crystalize(
         self, partner: Union["LogprobData", None], start_label: AccordLabel
     ) -> list[LogprobDataclass]:
+        metrics = self._get_metrics(start_label)
         if partner is None:
-            return [self._crystalize(None, start_label)]
-        if self.factuality == "Factual":
-            if partner.factuality != "Anti-Factual":
-                raise ValueError(
-                    f"Self and Partner have the same factuality!\n"
-                    f"Self: {self}\n"
-                    f"Partner: {partner}"
-                )
-            f, af = self, partner
+            return [self._crystalize(metrics, None, None)]
+        partner_metrics = partner._get_metrics(start_label)
+        if self._is_self_factual_vs_partner(partner):
+            f, f_metrics = self, metrics
+            af, af_metrics = partner, partner_metrics
         else:
-            if partner.factuality != "Factual":
-                raise ValueError(
-                    f"Self and Partner have the same factuality!\n"
-                    f"Self: {self}\n"
-                    f"Partner: {partner}"
-                )
-            f, af = partner, self
-        paired_metrics = PairedAccordMetrics.from_data(
-            factual_source_lps=f.tracked_source_lps,
-            factual_target_lps=f.tracked_target_lps,
-            anti_factual_source_lps=af.tracked_source_lps,
-            anti_factual_target_lps=af.tracked_target_lps,
+            f, f_metrics = partner, partner_metrics
+            af, af_metrics = self, metrics
+        factuality_metrics = PairedAccordMetrics.from_data(
+            factual_or_correct_source_lps=f.tracked_source_lps,
+            factual_or_correct_target_lps=f.tracked_target_lps,
+            af_or_incorrect_source_lps=af.tracked_source_lps,
+            af_or_incorrect_target_lps=af.tracked_target_lps,
+        )
+        correctness_metrics = self._get_correctness_paired_metrics(
+            metrics, partner, partner_metrics
         )
         return [
-            f._crystalize(paired_metrics, start_label),
-            af._crystalize(None, start_label),
+            f._crystalize(f_metrics, factuality_metrics, correctness_metrics),
+            af._crystalize(af_metrics, None, None),
         ]
 
+    def _get_metrics(self, start_label: AccordLabel):
+        return AccordMetrics.from_data(
+            source_lps=self.source_lps,
+            target_lps=self.target_lps,
+            question_lps=self.question_lps,
+            instance_lps=self.instance_lps,
+            forced_lps=self.forced_lps,
+            label_lps=self.label_lps,
+            choice_lps=self.choice_lps,
+            accord_label=self.accord_label,
+            csqa_label=self.csqa_label,
+            start_label=start_label,
+        )
+
     def _crystalize(
-        self, paired_metrics: PairedAccordMetrics | None, start_label: AccordLabel
+        self,
+        metrics: AccordMetrics,
+        factuality_paired_metrics: PairedAccordMetrics | None,
+        correctness_paired_metrics: PairedAccordMetrics | None,
     ) -> LogprobDataclass:
         return LogprobDataclass(
             accord_group_id=self.accord_group_id,
@@ -238,19 +251,48 @@ class LogprobData:
             accord_label=self.accord_label,
             csqa_label=self.csqa_label,
             subset=self.subset,
-            metrics=AccordMetrics.from_data(
-                source_lps=self.source_lps,
-                target_lps=self.target_lps,
-                question_lps=self.question_lps,
-                instance_lps=self.instance_lps,
-                forced_lps=self.forced_lps,
-                label_lps=self.label_lps,
-                choice_lps=self.choice_lps,
-                accord_label=self.accord_label,
-                csqa_label=self.csqa_label,
-                start_label=start_label,
-            ),
-            paired_metrics=paired_metrics,
+            metrics=metrics,
+            factuality_metrics=factuality_paired_metrics,
+            correctness_metrics=correctness_paired_metrics,
+        )
+
+    def _is_self_factual_vs_partner(self, partner: "LogprobData") -> bool:
+        if self.factuality == "Factual":
+            if partner.factuality != "Anti-Factual":
+                raise ValueError(
+                    f"Self and Partner have the same factuality!\n"
+                    f"Self: {self}\n"
+                    f"Partner: {partner}"
+                )
+            return True
+        else:
+            if partner.factuality != "Factual":
+                raise ValueError(
+                    f"Self and Partner have the same factuality!\n"
+                    f"Self: {self}\n"
+                    f"Partner: {partner}"
+                )
+            return False
+
+    def _get_correctness_paired_metrics(
+        self,
+        self_metrics: AccordMetrics,
+        partner: "LogprobData",
+        partner_metrics: AccordMetrics,
+    ) -> PairedAccordMetrics | None:
+        self_correctness = self_metrics.compute_correctness()
+        partner_correctness = partner_metrics.compute_correctness()
+        if self_correctness and not partner_correctness:
+            t, f = self, partner
+        elif not self_correctness and partner_correctness:
+            t, f = partner, self
+        else:
+            return None
+        return PairedAccordMetrics.from_data(
+            factual_or_correct_source_lps=t.tracked_source_lps,
+            factual_or_correct_target_lps=t.tracked_target_lps,
+            af_or_incorrect_source_lps=f.tracked_source_lps,
+            af_or_incorrect_target_lps=f.tracked_target_lps,
         )
 
 
