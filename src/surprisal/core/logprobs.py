@@ -146,9 +146,9 @@ class AggregatorOption(Enum):
 
     def aggregate(self, logprobs: list[float], top: int | None = None) -> float:
         if top is not None:
-            if all(lp > 0 for lp in logprobs):
+            if all(lp >= 0 for lp in logprobs):
                 logprobs = heapq.nlargest(top, logprobs)
-            elif all(lp < 0 for lp in logprobs):
+            elif all(lp <= 0 for lp in logprobs):
                 logprobs = heapq.nsmallest(top, logprobs)
             else:
                 raise ValueError(
