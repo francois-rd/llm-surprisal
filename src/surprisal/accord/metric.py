@@ -31,7 +31,13 @@ class PositionSubSubType(MetricSubSubType):
     CSQA = "CSQA"
 
 
-class SurprisalSubSubType(MetricSubSubType):
+class SurprisalSubSubType1(MetricSubSubType):
+    ALL = "ALL"
+    TOP_3 = "TOP_3"
+    TOP_5 = "TOP_5"
+
+
+class SurprisalSubSubType2(MetricSubSubType):
     MATCHING_ACCORD = "MATCHING_ACCORD"
     MATCHING_CSQA = "MATCHING_CSQA"
     NOT_MATCHING_ACCORD = "NOT_MATCHING_ACCORD"
@@ -58,9 +64,9 @@ class SurprisalSubType(MetricSubType):
     def get_subtype(self) -> type[MetricSubSubType]:
         st = SurprisalSubType
         if self in [st.SOURCE, st.TARGET, st.STATEMENT, st.QUESTION, st.INSTANCE]:
-            return AllType
+            return SurprisalSubSubType1
         elif self in [st.FORCED, st.LABEL, st.CHOICE]:
-            return SurprisalSubSubType
+            return SurprisalSubSubType2
         elif self == st.LLM:
             return AnswerType
         else:
@@ -168,12 +174,24 @@ class MetricID:
 #  options EXCEPT either the CSQA answer or the ACCORD answer, where it gets better.
 @dataclass
 class AccordMetrics:
+    # Technically, top3 and top5 only make sense with SUM or MEAN Agg, but we
+    # compute all of them for simplicity of implementation (time cost is minimal).
     surprisal_source_all: dict[AggregatorStr, float | None]
+    surprisal_source_top_3: dict[AggregatorStr, float | None]
+    surprisal_source_top_5: dict[AggregatorStr, float | None]
     surprisal_target_all: dict[AggregatorStr, float | None]
+    surprisal_target_top_3: dict[AggregatorStr, float | None]
+    surprisal_target_top_5: dict[AggregatorStr, float | None]
     surprisal_statement_all: dict[AggregatorStr, float | None]
+    surprisal_statement_top_3: dict[AggregatorStr, float | None]
+    surprisal_statement_top_5: dict[AggregatorStr, float | None]
 
     surprisal_question_all: dict[AggregatorStr, float]
+    surprisal_question_top_3: dict[AggregatorStr, float]
+    surprisal_question_top_5: dict[AggregatorStr, float]
     surprisal_instance_all: dict[AggregatorStr, float]
+    surprisal_instance_top_3: dict[AggregatorStr, float]
+    surprisal_instance_top_5: dict[AggregatorStr, float]
 
     surprisal_forced_matching_accord: dict[AggregatorStr, float]
     surprisal_label_matching_accord: dict[AggregatorStr, float]
@@ -231,15 +249,15 @@ class AccordMetrics:
         # The LLM is correct iff the token of the forced answer matching the
         # ground truth label (the ACCORD label) is top ranked compared to all
         # other forced answer labels.
-        return self.rank_forced_matching_accord[AggregatorOption.MIN.value] == 1
+        return self.rank_forced_matching_accord[AggregatorOption.MAX.value] == 1
 
     @classmethod
     def from_data(
         cls,
         source_lps: dict[AggregatorOption, list[float] | None],
         target_lps: dict[AggregatorOption, list[float] | None],
-        question_lps: dict[AggregatorOption, float],
-        instance_lps: dict[AggregatorOption, float],
+        question_lps: dict[AggregatorOption, list[float]],
+        instance_lps: dict[AggregatorOption, list[float]],
         forced_lps: dict[AccordLabel, dict[AggregatorOption, float]],
         label_lps: dict[AccordLabel, dict[AggregatorOption, float]],
         choice_lps: dict[AccordLabel, dict[AggregatorOption, float]],
@@ -248,13 +266,39 @@ class AccordMetrics:
         start_label: AccordLabel,
     ) -> "AccordMetrics":
         return AccordMetrics(
-            # All x source/target/both surprisal.
+            # All/Top3/Top5 x source/target/both surprisal.
             surprisal_source_all=cls._surprisal_basic(source_lps),
+            surprisal_source_top_3=cls._surprisal_basic(source_lps, top=3),
+            surprisal_source_top_5=cls._surprisal_basic(source_lps, top=5),
             surprisal_target_all=cls._surprisal_basic(target_lps),
+            surprisal_target_top_3=cls._surprisal_basic(target_lps, top=3),
+            surprisal_target_top_5=cls._surprisal_basic(target_lps, top=5),
             surprisal_statement_all=cls._surprisal_basic(source_lps, target_lps),
-            # All x question/context surprisal.
-            surprisal_question_all={a.value: lp for a, lp in question_lps.items()},
-            surprisal_instance_all={a.value: lp for a, lp in instance_lps.items()},
+            surprisal_statement_top_3=cls._surprisal_basic(
+                source_lps, target_lps, top=3
+            ),
+            surprisal_statement_top_5=cls._surprisal_basic(
+                source_lps, target_lps, top=5
+            ),
+            # All/Top3/Top5 x question/context surprisal.
+            surprisal_question_all={
+                a.value: a.aggregate(lp) for a, lp in question_lps.items()
+            },
+            surprisal_question_top_3={
+                a.value: a.aggregate(lp, top=3) for a, lp in question_lps.items()
+            },
+            surprisal_question_top_5={
+                a.value: a.aggregate(lp, top=5) for a, lp in question_lps.items()
+            },
+            surprisal_instance_all={
+                a.value: a.aggregate(lp) for a, lp in instance_lps.items()
+            },
+            surprisal_instance_top_3={
+                a.value: a.aggregate(lp, top=3) for a, lp in instance_lps.items()
+            },
+            surprisal_instance_top_5={
+                a.value: a.aggregate(lp, top=5) for a, lp in instance_lps.items()
+            },
             # Match/no-match x forced/label/choice x accord/csqa surprisal.
             surprisal_forced_matching_accord={
                 a.value: lp for a, lp in forced_lps[accord_label].items()
@@ -339,6 +383,7 @@ class AccordMetrics:
     def _surprisal_basic(
         data: dict[AggregatorOption, list[float] | None],
         data2: dict[AggregatorOption, list[float] | None] | None = None,
+        top: int | None = None,
     ) -> dict[AggregatorStr, float | None]:
         data_all = data
         if data2 is not None:
@@ -348,7 +393,7 @@ class AccordMetrics:
                 else:
                     data_all[agg] += data2[agg]
         return {
-            agg.value: None if lp is None else agg.aggregate(lp)
+            agg.value: None if lp is None else agg.aggregate(lp, top=top)
             for agg, lp in data.items()
         }
 

@@ -78,7 +78,6 @@ class LogprobData:
         self,
         current_data: _CurrentData,
         subset: AccordSubset,
-        flip_logprobs: bool,
         aggregators: list[AggregatorOption],
     ):
         prompt_data = current_data.inference.prompt_data
@@ -99,7 +98,6 @@ class LogprobData:
         self.csqa_label: AccordLabel = prompt_data.additional_data["csqa_label"]
         self.subset: AccordSubset = subset
         self.aggregators = aggregators
-        self.flip = flip_logprobs
 
         # These two are dict[aggregator, list[float] | None] where each float is the
         # aggregation of all tokens making up the logprobs for a source/target and
@@ -117,12 +115,13 @@ class LogprobData:
             self._aggregate_tracked_statements(current_data)
         )
 
-        # These two are dict[aggregator, float] where each float is the aggregation of
-        # all tokens making up the logprobs for the question or the entire instance.
-        self.question_lps = {}
-        self._aggregate(self.question_lps, current_data.logprob_of_question)
-        self.instance_lps = {}
-        self._aggregate(self.instance_lps, current_data.logprob_of_instance)
+        # These two are dict[aggregator, list[float]] where each list is the total
+        # sequence of all logprobs making up the tokens for the question or the entire
+        # instance. The current_data attribute is never None at this stage. The
+        # aggregators are added to indicate which ones to apply. They haven't been
+        # applied yet at this stage.
+        self.question_lps = {a: current_data.logprob_of_question for a in aggregators}
+        self.instance_lps = {a: current_data.logprob_of_instance for a in aggregators}
 
         # These three are dict[accord_label_A_to_E, dict[aggregator, float]] where
         # each float is the aggregation of all tokens making up the logprobs of the
@@ -182,9 +181,9 @@ class LogprobData:
     def _aggregate(self, data: dict, logprobs: list[float], append: bool = False):
         for a in self.aggregators:
             if append:
-                data.setdefault(a, []).append(a.aggregate(logprobs, self.flip))
+                data.setdefault(a, []).append(a.aggregate(logprobs))
             else:
-                data[a] = a.aggregate(logprobs, self.flip)
+                data[a] = a.aggregate(logprobs)
 
     def add_forced_label(self, current_data: _CurrentData) -> None:
         forced_label = current_data.inference.prompt_data.label
@@ -329,11 +328,12 @@ class SubsetLoader:
         for inference in load_dataclass_jsonl(inference_path, t=Inference):
             if inference.error_message is not None:
                 continue
+            prompt_logprobs = inference.derived_data["prompt_logprobs"]
             self.current_data = _CurrentData(
                 llm=llm,
                 inference=inference,
                 meta_data=self._get_meta_data(inference),
-                logprobs=Logprobs.from_dict(inference.derived_data["prompt_logprobs"]),
+                logprobs=Logprobs.from_dict(prompt_logprobs, self.flip),
             )
             success = (
                 self._fill_statement_tag_indices()
@@ -364,7 +364,7 @@ class SubsetLoader:
         return self.current_data.meta_data.id not in self.data
 
     def _make_logprob_data(self, data: _CurrentData) -> LogprobData:
-        return LogprobData(data, self.accord_subset, self.flip, self.aggregators)
+        return LogprobData(data, self.accord_subset, self.aggregators)
 
     def _get_sequence(
         self,

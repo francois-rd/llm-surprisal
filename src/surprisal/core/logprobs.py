@@ -1,6 +1,7 @@
 from typing import Any, Callable, Iterable, Literal
 from dataclasses import dataclass
 from enum import Enum
+import heapq
 import re
 
 Rank = int
@@ -14,6 +15,14 @@ class Logprob:
     rank: Rank
     logprob: float
 
+    @staticmethod
+    def from_dict(data: dict[str, Any], flip: bool) -> "Logprob":
+        return Logprob(
+            token=data["token"],
+            rank=data["rank"],
+            logprob=(-1 if flip else 1) * data["logprob"],
+        )
+
 
 @dataclass
 class RankedLogprob:
@@ -22,10 +31,12 @@ class RankedLogprob:
     ranking: Literal["relative", "absolute"]
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "RankedLogprob":
+    def from_dict(data: dict[str, Any], flip: bool) -> "RankedLogprob":
         return RankedLogprob(
-            chosen=Logprob(**data["chosen"]),
-            others={rank: Logprob(**d) for rank, d in data["others"].items()},
+            chosen=Logprob.from_dict(data["chosen"], flip),
+            others={
+                rank: Logprob.from_dict(d, flip) for rank, d in data["others"].items()
+            },
             ranking=data["ranking"],
         )
 
@@ -71,8 +82,8 @@ class Logprobs:
     sequence: list[RankedLogprob]
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "Logprobs":
-        return Logprobs(sequence=[RankedLogprob.from_dict(d) for d in data["sequence"]])
+    def from_dict(data: dict[str, Any], flip: bool) -> "Logprobs":
+        return Logprobs([RankedLogprob.from_dict(d, flip) for d in data["sequence"]])
 
     def maybe_trim(self, trim_indicator: str | None) -> None:
         if trim_indicator is not None:
@@ -133,21 +144,30 @@ class AggregatorOption(Enum):
     MIN = "MIN"
     MAX = "MAX"
 
-    def aggregate(self, logprobs: list[float], negate: bool = False) -> float:
+    def aggregate(self, logprobs: list[float], top: int | None = None) -> float:
+        if top is not None:
+            if all(lp > 0 for lp in logprobs):
+                logprobs = heapq.nlargest(top, logprobs)
+            elif all(lp < 0 for lp in logprobs):
+                logprobs = heapq.nsmallest(top, logprobs)
+            else:
+                raise ValueError(
+                    f"Logprobs should be all negative or all positive. Got: {logprobs}"
+                )
         if self == AggregatorOption.SUM:
-            return (-1 if negate else 1) * sum(logprobs)
+            return sum(logprobs)
         elif self == AggregatorOption.MEAN:
             # Logprobs should never be empty, so division by 0 should never happen.
-            return (-1 if negate else 1) * sum(logprobs) / len(logprobs)
+            return sum(logprobs) / len(logprobs)
         elif self == AggregatorOption.FIRST:
             # Logprobs should never be empty, so indexing error should never happen.
-            return (-1 if negate else 1) * logprobs[0]
+            return logprobs[0]
         elif self == AggregatorOption.LAST:
             # Logprobs should never be empty, so indexing error should never happen.
-            return (-1 if negate else 1) * logprobs[-1]
+            return logprobs[-1]
         elif self == AggregatorOption.MIN:
-            return (-1 if negate else 1) * min(logprobs)
+            return min(logprobs)
         elif self == AggregatorOption.MAX:
-            return (-1 if negate else 1) * max(logprobs)
+            return max(logprobs)
         else:
             raise ValueError(f"Unsupported aggregator: {self}")

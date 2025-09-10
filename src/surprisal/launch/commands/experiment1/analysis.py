@@ -84,7 +84,9 @@ class DataLoader:
         llm: Nickname,
     ) -> list[float] | None:
         target = self._get_target(inference, logprob_type)
-        logprobs = Logprobs.from_dict(inference.derived_data["prompt_logprobs"])
+        logprobs = Logprobs.from_dict(
+            inference.derived_data["prompt_logprobs"], self.flip
+        )
 
         # Validate the start index (if any).
         start_idx = self._get_start_idx(logprob_type, logprobs)
@@ -177,7 +179,7 @@ class DataLoader:
         self.data.setdefault("GroupID", []).append(inference.prompt_data.group_id)
         self.data.setdefault("LogprobType", []).append(logprob_type.value)
         for a in self.aggregators:
-            self.data.setdefault(a.value, []).append(a.aggregate(logprobs, self.flip))
+            self.data.setdefault(a.value, []).append(a.aggregate(logprobs))
 
 
 def make_plot_path(plots_dir: str, main_type: str, llm: Nickname, sub_type: str) -> str:

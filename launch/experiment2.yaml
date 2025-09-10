@@ -50,6 +50,7 @@ aggregators:
 - SUM
 - MEAN
 - MIN
+- MAX
 flip_logprobs: true
 label_count: 5
 p_value_threshold: 0.0001

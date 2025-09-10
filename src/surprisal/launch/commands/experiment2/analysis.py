@@ -18,10 +18,10 @@ from ....accord import (
     MetricID,
     PairedMetricID,
     MetricType,
-    AllType,
     AnswerType,
     SurprisalSubType,
-    SurprisalSubSubType,
+    SurprisalSubSubType1,
+    SurprisalSubSubType2,
 )
 
 from .base import AccordSubset, Config
@@ -991,7 +991,7 @@ class CrossAnalyzer(Analyzer):
 
     @staticmethod
     def _generate_x_selection():
-        for surprisal_sub_sub in SurprisalSubSubType:
+        for surprisal_sub_sub in SurprisalSubSubType2:
             if "csqa" in surprisal_sub_sub.value.lower():
                 continue
             yield MetricID(
@@ -1014,13 +1014,13 @@ class CrossAnalyzer(Analyzer):
             yield MetricID(
                 metric=MetricType.SURPRISAL,
                 sub_metric=surprisal_sub,
-                sub_sub_metric=AllType.ALL,
+                sub_sub_metric=SurprisalSubSubType1.TOP_3,
                 agg=AggregatorOption.SUM,
             )
         yield MetricID(
             metric=MetricType.SURPRISAL,
             sub_metric=sst.CHOICE,
-            sub_sub_metric=SurprisalSubSubType.MATCHING_ACCORD,
+            sub_sub_metric=SurprisalSubSubType2.MATCHING_ACCORD,
             agg=AggregatorOption.SUM,
         )
 
