@@ -194,8 +194,13 @@ def make_path(root_dir: str, main_type: str, llm: Nickname, sub_type: str) -> st
 
 
 def save_figure(fig, plot_path: str, file_base_name: str) -> None:
-    fig.write_image(os.path.join(plot_path, file_base_name + ".png"), scale=3.0)
-    fig.write_image(os.path.join(plot_path, file_base_name + ".pdf"))
+    from kaleido._kaleido_tab import KaleidoError  # noqa
+
+    try:
+        fig.write_image(os.path.join(plot_path, file_base_name + ".png"), scale=3.0)
+        fig.write_image(os.path.join(plot_path, file_base_name + ".pdf"))
+    except KaleidoError:
+        pass
 
 
 def post_process_faceted_plot(fig, x_label: str, y_label: str) -> None:
