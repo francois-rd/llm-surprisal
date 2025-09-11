@@ -211,8 +211,14 @@ class LogprobData:
         factuality_metrics = PairedAccordMetrics.from_data(
             factual_or_correct_source_lps=f.tracked_source_lps,
             factual_or_correct_target_lps=f.tracked_target_lps,
+            factual_or_correct_question_lps=f.question_lps,
+            factual_or_correct_label_lps=f.label_lps,
+            factual_or_correct_choice_lps=f.choice_lps,
             af_or_incorrect_source_lps=af.tracked_source_lps,
             af_or_incorrect_target_lps=af.tracked_target_lps,
+            af_or_incorrect_question_lps=af.question_lps,
+            af_or_incorrect_label_lps=af.label_lps,
+            af_or_incorrect_choice_lps=af.choice_lps,
         )
         correctness_metrics = self._get_correctness_paired_metrics(
             metrics, partner, partner_metrics
@@ -290,8 +296,14 @@ class LogprobData:
         return PairedAccordMetrics.from_data(
             factual_or_correct_source_lps=t.tracked_source_lps,
             factual_or_correct_target_lps=t.tracked_target_lps,
+            factual_or_correct_question_lps=t.question_lps,
+            factual_or_correct_label_lps=t.label_lps,
+            factual_or_correct_choice_lps=t.choice_lps,
             af_or_incorrect_source_lps=f.tracked_source_lps,
             af_or_incorrect_target_lps=f.tracked_target_lps,
+            af_or_incorrect_question_lps=f.question_lps,
+            af_or_incorrect_label_lps=f.label_lps,
+            af_or_incorrect_choice_lps=f.choice_lps,
         )
 
 

@@ -1,5 +1,5 @@
+from typing import Iterable, Hashable
 from dataclasses import dataclass
-from typing import Iterable
 from enum import Enum
 
 from scipy.stats import entropy
@@ -465,6 +465,9 @@ class PairedMetricType(Enum):
     SOURCE = "SOURCE"
     TARGET = "TARGET"
     STATEMENT = "STATEMENT"
+    QUESTION = "QUESTION"
+    LABEL = "LABEL"
+    CHOICE = "CHOICE"
 
 
 @dataclass
@@ -484,6 +487,9 @@ class PairedAccordMetrics:
     paired_source: dict[AggregatorStr, float]
     paired_target: dict[AggregatorStr, float]
     paired_statement: dict[AggregatorStr, float]
+    paired_question: dict[AggregatorStr, float]
+    paired_label: dict[AggregatorStr, float]
+    paired_choice: dict[AggregatorStr, float]
 
     @staticmethod
     def as_attribute_name(paired_metric_id: PairedMetricID) -> str:
@@ -502,12 +508,18 @@ class PairedAccordMetrics:
         factual_or_correct_target_lps: dict[
             tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
         ],
+        factual_or_correct_question_lps: dict[AggregatorOption, list[float]],
+        factual_or_correct_label_lps: dict[AccordLabel, dict[AggregatorOption, float]],
+        factual_or_correct_choice_lps: dict[AccordLabel, dict[AggregatorOption, float]],
         af_or_incorrect_source_lps: dict[
             tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
         ],
         af_or_incorrect_target_lps: dict[
             tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
         ],
+        af_or_incorrect_question_lps: dict[AggregatorOption, list[float]],
+        af_or_incorrect_label_lps: dict[AccordLabel, dict[AggregatorOption, float]],
+        af_or_incorrect_choice_lps: dict[AccordLabel, dict[AggregatorOption, float]],
     ) -> "PairedAccordMetrics":
         source = cls._pair_up(factual_or_correct_source_lps, af_or_incorrect_source_lps)
         target = cls._pair_up(factual_or_correct_target_lps, af_or_incorrect_target_lps)
@@ -516,21 +528,41 @@ class PairedAccordMetrics:
             paired_source=cls._aggregate(source),
             paired_target=cls._aggregate(target),
             paired_statement=cls._aggregate(combine),
+            paired_question=cls._aggregate(
+                cls._pair_up_question(
+                    factual_or_correct_question_lps, af_or_incorrect_question_lps
+                )
+            ),
+            paired_label=cls._aggregate(
+                cls._pair_up(factual_or_correct_label_lps, af_or_incorrect_label_lps)
+            ),
+            paired_choice=cls._aggregate(
+                cls._pair_up(factual_or_correct_choice_lps, af_or_incorrect_choice_lps)
+            ),
         )
 
     @staticmethod
     def _pair_up(
-        factual_or_correct_lps: dict[
-            tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
-        ],
-        af_or_incorrect_lps: dict[
-            tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
-        ],
+        factual_or_correct_lps: dict[Hashable, dict[AggregatorOption, float]],
+        af_or_incorrect_lps: dict[Hashable, dict[AggregatorOption, float]],
     ) -> dict[AggregatorOption, list[float]]:
         result = {}
         for key, f_or_c_data in factual_or_correct_lps.items():
             for agg, af_or_i_lp in af_or_incorrect_lps[key].items():
                 result.setdefault(agg, []).append(f_or_c_data[agg] - af_or_i_lp)
+        return result
+
+    @staticmethod
+    def _pair_up_question(
+        factual_or_correct_lps: dict[AggregatorOption, list[float]],
+        af_or_incorrect_lps: dict[AggregatorOption, list[float]],
+    ) -> dict[AggregatorOption, list[float]]:
+        result = {}
+        for agg, f_or_c_lps in factual_or_correct_lps.items():
+            result[agg] = [  # Not much point in using numpy is converting back to list.
+                f_or_c - af_or_incorrect_lps[agg][i]
+                for i, f_or_c in enumerate(f_or_c_lps)
+            ]
         return result
 
     @staticmethod
