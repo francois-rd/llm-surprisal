@@ -4,14 +4,14 @@ checkpoint_frequency: 0.1
 chosen_only_logprob: true
 trim_inference_logprobs: true
 verbose: true
-invert: false
+invert: false  # Remember to change 'user_template_id' manually to match
 system_prompt_id: simple
 system_prompt:
   simple-baseline: >-
     You are a helpful assistant in a knowledge verification process.
   simple: >-
     You are a helpful assistant in a reasoning task.
-user_template_id: accord
+user_template_id: accord  # Remember to change 'invert' manually to match
 user_template:
   accord-baseline: >-
     Answer the following multiple-choice question with the label (one of: "A", "B",
@@ -45,12 +45,14 @@ analysis_llms:
 analysis_groups:
   - Subset
   - ReasoningHops
-  - Distractors
-aggregators:
+abs_aggregators:
 - SUM
 - MEAN
+- MAX
+rel_aggregators:
 - MIN
 - MAX
+- EXTREMUM
 flip_logprobs: true
 label_count: 5
 p_value_threshold: 0.0001

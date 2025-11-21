@@ -9,13 +9,13 @@ from ....accord import (
     AccordID,
     AccordLabel,
     AccordMetaData,
-    AccordMetrics,
+    AbsoluteMetrics,
     AccordStatement,
     AccordStatementID,
     AccordStatementKey,
     AccordStatementSurfacer,
     AccordTerm,
-    PairedAccordMetrics,
+    RelativeMetrics,
 )
 from ....inference import Inference
 from ....llms import Nickname
@@ -68,18 +68,15 @@ class LogprobDataclass:
     accord_label: AccordLabel
     csqa_label: AccordLabel
     subset: AccordSubset
-    metrics: AccordMetrics
-    factuality_metrics: PairedAccordMetrics | None = None
-    correctness_metrics: PairedAccordMetrics | None = None
+    metrics: AbsoluteMetrics
+    factuality_metrics: RelativeMetrics | None = None
+    true_correctness_metrics: RelativeMetrics | None = None
+    false_correctness_metrics: RelativeMetrics | None = None
+    opposite_correctness_metrics: RelativeMetrics | None = None
 
 
 class LogprobData:
-    def __init__(
-        self,
-        current_data: _CurrentData,
-        subset: AccordSubset,
-        aggregators: list[AggregatorOption],
-    ):
+    def __init__(self, current_data: _CurrentData, subset: AccordSubset):
         prompt_data = current_data.inference.prompt_data
         self.llm: Nickname = current_data.llm
 
@@ -97,37 +94,56 @@ class LogprobData:
         self.accord_label: AccordLabel = current_data.meta_data.label
         self.csqa_label: AccordLabel = prompt_data.additional_data["csqa_label"]
         self.subset: AccordSubset = subset
-        self.aggregators = aggregators
 
         # These two are dict[aggregator, list[float] | None] where each float is the
         # aggregation of all tokens making up the logprobs for a source/target and
         # the list is the set of all such terms. These eventually need some form of
         # macro aggregation (e.g., averaging all individual term logprobs) which is
-        # handled by the AccordMetrics. A value of None occurs for the BASELINE subset.
-        self.source_lps, self.target_lps = self._aggregate_statements(current_data)
+        # handled by the AbsoluteMetrics. A value of None occurs for the BASELINE.
+        result = self._aggregate_abs_statements(current_data)
+        self.abs_source_lps, self.abs_target_lps = result
 
         # These two are dict[AccordStatementKey, dict[aggregator, float] | None]
         # where each float is the aggregation of all tokens making up the logprobs for
-        # a source/target tracked by which statement they belong to. PairedAccordMetrics
-        # subtracts the tracked values (F from AF) and then aggregates the result. A
+        # a source/target tracked by which statement they belong to. RelativeMetrics
+        # subtracts the tracked values element-wise and then aggregates the result. A
         # value of None occurs for the BASELINE subset.
-        self.tracked_source_lps, self.tracked_target_lps = (
-            self._aggregate_tracked_statements(current_data)
-        )
+        result = self._aggregate_rel_statements(current_data)
+        self.rel_source_lps, self.rel_target_lps = result
 
-        # These two are dict[aggregator, list[float]] where each list is the total
+        # These are dict[aggregator, list[float]] where each list is the total
         # sequence of all logprobs making up the tokens for the question or the entire
         # instance. The current_data attribute is never None at this stage. The
         # aggregators are added to indicate which ones to apply. They haven't been
         # applied yet at this stage.
-        self.question_lps = {a: current_data.logprob_of_question for a in aggregators}
-        self.instance_lps = {a: current_data.logprob_of_instance for a in aggregators}
+        self.abs_question_lps = {
+            a: current_data.logprob_of_question
+            for a in AggregatorOption.absolute_options()
+        }
+        self.abs_instance_lps = {
+            a: current_data.logprob_of_instance
+            for a in AggregatorOption.absolute_options()
+        }
+        self.rel_question_lps = {
+            a: current_data.logprob_of_question
+            for a in AggregatorOption.relative_options()
+        }
 
-        # These three are dict[accord_label_A_to_E, dict[aggregator, float]] where
-        # each float is the aggregation of all tokens making up the logprobs of the
+        # These are dict[accord_label_A_to_E, dict[aggregator, float]] where each
+        # float is the aggregation of all tokens making up the logprobs of the
         # indicated object, and this is done for each label and each aggregator.
-        self.label_lps, self.choice_lps = self._aggregate_choices(current_data)
-        self.forced_lps = self._aggregate_forced_labels(current_data)
+        self.abs_label_lps, self.abs_choice_lps = self._aggregate_choices(
+            current_data, AggregatorOption.absolute_options()
+        )
+        self.rel_label_lps, self.rel_choice_lps = self._aggregate_choices(
+            current_data, AggregatorOption.relative_options()
+        )
+        self.abs_forced_lps = self._aggregate_forced_labels(
+            current_data, AggregatorOption.absolute_options()
+        )
+        self.rel_forced_lps = self._aggregate_forced_labels(
+            current_data, AggregatorOption.relative_options()
+        )
 
     @staticmethod
     def _get_factuality(prompt_type: PromptType) -> str:
@@ -143,43 +159,57 @@ class LogprobData:
             return None
         return subset.value - self.reasoning_hops
 
-    def _aggregate_statements(self, current_data: _CurrentData) -> tuple[dict, dict]:
+    def _aggregate_abs_statements(
+        self, current_data: _CurrentData
+    ) -> tuple[dict, dict]:
+        aggregators = AggregatorOption.absolute_options()
         if current_data.logprob_of_statements is None:
-            agg_to_none = {a: None for a in self.aggregators}
+            agg_to_none = {a: None for a in aggregators}
             return agg_to_none, agg_to_none
         all_source_lps, all_target_lps = {}, {}
         for source_lps, target_lps in current_data.logprob_of_statements.values():
-            self._aggregate(all_source_lps, source_lps, append=True)
-            self._aggregate(all_target_lps, target_lps, append=True)
+            self._aggregate(all_source_lps, source_lps, aggregators, append=True)
+            self._aggregate(all_target_lps, target_lps, aggregators, append=True)
         return all_source_lps, all_target_lps
 
-    def _aggregate_tracked_statements(
+    def _aggregate_rel_statements(
         self, current_data: _CurrentData
     ) -> tuple[dict, dict]:
+        aggregators = AggregatorOption.relative_options()
         if current_data.logprob_of_statements is None:
-            agg_to_none = {a: None for a in self.aggregators}
+            agg_to_none = {a: None for a in aggregators}
             return agg_to_none, agg_to_none
         all_source_lps, all_target_lps = {}, {}
         for key, (source, target) in current_data.logprob_of_statements.items():
-            self._aggregate(all_source_lps.setdefault(key, {}), source)
-            self._aggregate(all_target_lps.setdefault(key, {}), target)
+            self._aggregate(all_source_lps.setdefault(key, {}), source, aggregators)
+            self._aggregate(all_target_lps.setdefault(key, {}), target, aggregators)
         return all_source_lps, all_target_lps
 
-    def _aggregate_choices(self, current_data: _CurrentData) -> tuple[dict, dict]:
+    def _aggregate_choices(
+        self, current_data: _CurrentData, aggs: list[AggregatorOption]
+    ) -> tuple[dict, dict]:
         all_label_lps, all_choice_lps = {}, {}
         lps = current_data.logprob_of_answer_choices
         for label, (label_lp, choice_lp) in lps.items():
-            self._aggregate(all_label_lps.setdefault(label, {}), label_lp)
-            self._aggregate(all_choice_lps.setdefault(label, {}), choice_lp)
+            self._aggregate(all_label_lps.setdefault(label, {}), label_lp, aggs)
+            self._aggregate(all_choice_lps.setdefault(label, {}), choice_lp, aggs)
         return all_label_lps, all_choice_lps
 
-    def _aggregate_forced_labels(self, current_data: _CurrentData) -> dict:
-        all_forced_label_lps, lp = {}, current_data.logprob_of_forced_answer
-        self._aggregate(all_forced_label_lps.setdefault(self.forced_label, {}), lp)
-        return all_forced_label_lps
+    def _aggregate_forced_labels(
+        self, current_data: _CurrentData, aggs: list[AggregatorOption]
+    ) -> dict:
+        all_forced_lps, lp = {}, current_data.logprob_of_forced_answer
+        self._aggregate(all_forced_lps.setdefault(self.forced_label, {}), lp, aggs)
+        return all_forced_lps
 
-    def _aggregate(self, data: dict, logprobs: list[float], append: bool = False):
-        for a in self.aggregators:
+    @staticmethod
+    def _aggregate(
+        data: dict,
+        logprobs: list[float],
+        aggregators: list[AggregatorOption],
+        append: bool = False,
+    ):
+        for a in aggregators:
             if append:
                 data.setdefault(a, []).append(a.aggregate(logprobs))
             else:
@@ -188,19 +218,23 @@ class LogprobData:
     def add_forced_label(self, current_data: _CurrentData) -> None:
         forced_label = current_data.inference.prompt_data.label
         lp = current_data.logprob_of_forced_answer
-        self._aggregate(self.forced_lps.setdefault(forced_label, {}), lp)
+        abs_forced = self.abs_forced_lps.setdefault(forced_label, {})
+        self._aggregate(abs_forced, lp, AggregatorOption.absolute_options())
+        rel_forced = self.rel_forced_lps.setdefault(forced_label, {})
+        self._aggregate(rel_forced, lp, AggregatorOption.relative_options())
 
     def is_complete(self, count: int) -> bool:
         """Returns whether each dict with multiple AccordLabels has 'count' of them."""
-        partial = len(self.label_lps) == count and len(self.choice_lps) == count
-        return partial and len(self.forced_lps) == count
+        # Don't need to check relative since one cannot be complete without the other.
+        partial = len(self.abs_label_lps) == count and len(self.abs_choice_lps) == count
+        return partial and len(self.abs_forced_lps) == count
 
     def crystalize(
         self, partner: Union["LogprobData", None], start_label: AccordLabel
     ) -> list[LogprobDataclass]:
         metrics = self._get_metrics(start_label)
         if partner is None:
-            return [self._crystalize(metrics, None, None)]
+            return [self._crystalize(metrics)]
         partner_metrics = partner._get_metrics(start_label)
         if self._is_self_factual_vs_partner(partner):
             f, f_metrics = self, metrics
@@ -208,35 +242,24 @@ class LogprobData:
         else:
             f, f_metrics = partner, partner_metrics
             af, af_metrics = self, metrics
-        factuality_metrics = PairedAccordMetrics.from_data(
-            factual_or_correct_source_lps=f.tracked_source_lps,
-            factual_or_correct_target_lps=f.tracked_target_lps,
-            factual_or_correct_question_lps=f.question_lps,
-            factual_or_correct_label_lps=f.label_lps,
-            factual_or_correct_choice_lps=f.choice_lps,
-            af_or_incorrect_source_lps=af.tracked_source_lps,
-            af_or_incorrect_target_lps=af.tracked_target_lps,
-            af_or_incorrect_question_lps=af.question_lps,
-            af_or_incorrect_label_lps=af.label_lps,
-            af_or_incorrect_choice_lps=af.choice_lps,
-        )
-        correctness_metrics = self._get_correctness_paired_metrics(
+        factuality_metrics = f._get_relative_metrics(af)
+        correctness_metrics = self._get_all_correctness_relative_metrics(
             metrics, partner, partner_metrics
         )
         return [
-            f._crystalize(f_metrics, factuality_metrics, correctness_metrics),
-            af._crystalize(af_metrics, None, None),
+            f._crystalize(f_metrics, factuality_metrics, **correctness_metrics),
+            af._crystalize(af_metrics),
         ]
 
     def _get_metrics(self, start_label: AccordLabel):
-        return AccordMetrics.from_data(
-            source_lps=self.source_lps,
-            target_lps=self.target_lps,
-            question_lps=self.question_lps,
-            instance_lps=self.instance_lps,
-            forced_lps=self.forced_lps,
-            label_lps=self.label_lps,
-            choice_lps=self.choice_lps,
+        return AbsoluteMetrics.from_data(
+            source_lps=self.abs_source_lps,
+            target_lps=self.abs_target_lps,
+            question_lps=self.abs_question_lps,
+            instance_lps=self.abs_instance_lps,
+            forced_lps=self.abs_forced_lps,
+            label_lps=self.abs_label_lps,
+            choice_lps=self.abs_choice_lps,
             accord_label=self.accord_label,
             csqa_label=self.csqa_label,
             start_label=start_label,
@@ -244,9 +267,9 @@ class LogprobData:
 
     def _crystalize(
         self,
-        metrics: AccordMetrics,
-        factuality_paired_metrics: PairedAccordMetrics | None,
-        correctness_paired_metrics: PairedAccordMetrics | None,
+        metrics: AbsoluteMetrics,
+        factuality_metrics: RelativeMetrics | None = None,
+        **correctness_metrics: RelativeMetrics | None,
     ) -> LogprobDataclass:
         return LogprobDataclass(
             accord_group_id=self.accord_group_id,
@@ -257,8 +280,8 @@ class LogprobData:
             csqa_label=self.csqa_label,
             subset=self.subset,
             metrics=metrics,
-            factuality_metrics=factuality_paired_metrics,
-            correctness_metrics=correctness_paired_metrics,
+            factuality_metrics=factuality_metrics,
+            **correctness_metrics,
         )
 
     def _is_self_factual_vs_partner(self, partner: "LogprobData") -> bool:
@@ -279,31 +302,48 @@ class LogprobData:
                 )
             return False
 
-    def _get_correctness_paired_metrics(
+    def _get_all_correctness_relative_metrics(
         self,
-        self_metrics: AccordMetrics,
+        self_metrics: AbsoluteMetrics,
         partner: "LogprobData",
-        partner_metrics: AccordMetrics,
-    ) -> PairedAccordMetrics | None:
+        partner_metrics: AbsoluteMetrics,
+    ) -> dict[str, RelativeMetrics | None]:
         self_correctness = self_metrics.compute_correctness()
         partner_correctness = partner_metrics.compute_correctness()
+        if self_correctness and partner_correctness:
+            if self._is_self_factual_vs_partner(partner):
+                metrics = self._get_relative_metrics(partner)
+            else:
+                metrics = partner._get_relative_metrics(self)
+            return dict(true_correctness_metrics=metrics)
         if self_correctness and not partner_correctness:
-            t, f = self, partner
+            return dict(
+                opposite_correctness_metrics=self._get_relative_metrics(partner)
+            )
         elif not self_correctness and partner_correctness:
-            t, f = partner, self
+            return dict(
+                opposite_correctness_metrics=partner._get_relative_metrics(self)
+            )
         else:
-            return None
-        return PairedAccordMetrics.from_data(
-            factual_or_correct_source_lps=t.tracked_source_lps,
-            factual_or_correct_target_lps=t.tracked_target_lps,
-            factual_or_correct_question_lps=t.question_lps,
-            factual_or_correct_label_lps=t.label_lps,
-            factual_or_correct_choice_lps=t.choice_lps,
-            af_or_incorrect_source_lps=f.tracked_source_lps,
-            af_or_incorrect_target_lps=f.tracked_target_lps,
-            af_or_incorrect_question_lps=f.question_lps,
-            af_or_incorrect_label_lps=f.label_lps,
-            af_or_incorrect_choice_lps=f.choice_lps,
+            if self._is_self_factual_vs_partner(partner):
+                metrics = self._get_relative_metrics(partner)
+            else:
+                metrics = partner._get_relative_metrics(self)
+            return dict(false_correctness_metrics=metrics)
+
+    def _get_relative_metrics(self, partner: "LogprobData") -> RelativeMetrics:
+        """Self is interpreted as factual/correct and partner as AF/incorrect."""
+        return RelativeMetrics.from_data(
+            factual_or_correct_source_lps=self.rel_source_lps,
+            factual_or_correct_target_lps=self.rel_target_lps,
+            factual_or_correct_question_lps=self.rel_question_lps,
+            factual_or_correct_label_lps=self.rel_label_lps,
+            factual_or_correct_choice_lps=self.rel_choice_lps,
+            af_or_incorrect_source_lps=partner.rel_source_lps,
+            af_or_incorrect_target_lps=partner.rel_target_lps,
+            af_or_incorrect_question_lps=partner.rel_question_lps,
+            af_or_incorrect_label_lps=partner.rel_label_lps,
+            af_or_incorrect_choice_lps=partner.rel_choice_lps,
         )
 
 
@@ -314,13 +354,11 @@ class SubsetLoader:
         accord_subset: AccordSubset,
         pre_analysis_dir: str,
         flip_logprobs: bool,
-        aggregators: list[AggregatorOption],
     ):
         self.accord_loader = accord_loader
         self.accord_subset = accord_subset
         self.pre_analysis_dir = pre_analysis_dir
         self.flip = flip_logprobs
-        self.aggregators = aggregators
         self.data = self.logger = None
         self.current_data: _CurrentData | None = None
         self.meta_datas = {i.meta_data.id: i.meta_data for i in accord_loader.load()}
@@ -376,7 +414,7 @@ class SubsetLoader:
         return self.current_data.meta_data.id not in self.data
 
     def _make_logprob_data(self, data: _CurrentData) -> LogprobData:
-        return LogprobData(data, self.accord_subset, self.aggregators)
+        return LogprobData(data, self.accord_subset)
 
     def _get_sequence(
         self,
@@ -552,9 +590,6 @@ class Experiment2PreAnalysis:
                 accord_subset=subset,
                 pre_analysis_dir=self.out_dir,
                 flip_logprobs=self.cfg.flip_logprobs,
-                # This makes pre-analysis produce data for all aggregators, which
-                # mean we don't have to redo this just to add analysis aggregators.
-                aggregators=[agg for agg in AggregatorOption],
             )
         self.print = ConditionalPrinter(self.cfg.verbose)
         self.data_by_llm = {}

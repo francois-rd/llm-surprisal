@@ -69,13 +69,8 @@ class Config:
     user_template_indicator: str = "Do not output anything else."
     analysis_llms: list[Nickname] = field(default_factory=list)
     analysis_groups: list[str] = field(default_factory=lambda: ["Subset"])
-    aggregators: list[AggregatorOption] = field(
-        default_factory=lambda: [
-            AggregatorOption.FIRST,
-            AggregatorOption.SUM,
-            AggregatorOption.MIN,
-        ]
-    )
+    abs_aggregators: list[AggregatorOption] = field(default_factory=list)
+    rel_aggregators: list[AggregatorOption] = field(default_factory=list)
     flip_logprobs: bool = True
     label_count: int = 5
 

@@ -16,7 +16,7 @@ from .base import (
     CsqaBase,
 )
 from .metric import (
-    AccordMetrics,
+    AbsoluteMetrics,
     AllType,
     AnswerType,
     MetricID,
@@ -32,9 +32,9 @@ from .metric import (
     SurprisalSubType,
     SurprisalSubSubType1,
     SurprisalSubSubType2,
-    PairedAccordMetrics,
-    PairedMetricType,
-    PairedMetricID,
+    RelativeMetrics,
+    RelativeMetricType,
+    RelativeMetricID,
 )
 from .surfacer import (
     AccordInstanceSurfacer,

@@ -143,6 +143,16 @@ class AggregatorOption(Enum):
     LAST = "LAST"
     MIN = "MIN"
     MAX = "MAX"
+    EXTREMUM = "EXTREMUM"
+
+    @staticmethod
+    def absolute_options() -> list["AggregatorOption"]:
+        ao = AggregatorOption
+        return [ao.SUM, ao.MEAN, ao.FIRST, ao.LAST, ao.MIN, ao.MAX]
+
+    @staticmethod
+    def relative_options() -> list["AggregatorOption"]:
+        return [AggregatorOption.MIN, AggregatorOption.MAX, AggregatorOption.EXTREMUM]
 
     def aggregate(self, logprobs: list[float], top: int | None = None) -> float:
         if top is not None:

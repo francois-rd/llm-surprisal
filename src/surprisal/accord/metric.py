@@ -173,7 +173,7 @@ class MetricID:
 #  (either F or AF) has a slight differentiation where the metric gets worse for ALL
 #  options EXCEPT either the CSQA answer or the ACCORD answer, where it gets better.
 @dataclass
-class AccordMetrics:
+class AbsoluteMetrics:
     # Technically, top3 and top5 only make sense with SUM or MEAN Agg, but we
     # compute all of them for simplicity of implementation (time cost is minimal).
     surprisal_source_all: dict[AggregatorStr, float | None]
@@ -264,8 +264,8 @@ class AccordMetrics:
         accord_label: AccordLabel,
         csqa_label: AccordLabel,
         start_label: AccordLabel,
-    ) -> "AccordMetrics":
-        return AccordMetrics(
+    ) -> "AbsoluteMetrics":
+        return AbsoluteMetrics(
             # All/Top3/Top5 x source/target/both surprisal.
             surprisal_source_all=cls._surprisal_basic(source_lps),
             surprisal_source_top_3=cls._surprisal_basic(source_lps, top=3),
@@ -461,7 +461,7 @@ class AccordMetrics:
         return float(sum(np.exp([-abs(x) for x in data])))  # If pos logprobs, need neg.
 
 
-class PairedMetricType(Enum):
+class RelativeMetricType(Enum):
     SOURCE = "SOURCE"
     TARGET = "TARGET"
     STATEMENT = "STATEMENT"
@@ -471,33 +471,32 @@ class PairedMetricType(Enum):
 
 
 @dataclass
-class PairedMetricID:
-    metric: PairedMetricType
+class RelativeMetricID:
+    metric: RelativeMetricType
     agg: AggregatorOption | None
 
     @staticmethod
-    def yield_all(aggregators: list[AggregatorOption]) -> Iterable["PairedMetricID"]:
-        for metric in PairedMetricType:
+    def yield_all(aggregators: list[AggregatorOption]) -> Iterable["RelativeMetricID"]:
+        for metric in RelativeMetricType:
             for agg in aggregators:
-                yield PairedMetricID(metric, agg)
+                yield RelativeMetricID(metric, agg)
 
 
 @dataclass
-class PairedAccordMetrics:
-    paired_source: dict[AggregatorStr, float]
-    paired_target: dict[AggregatorStr, float]
-    paired_statement: dict[AggregatorStr, float]
-    paired_question: dict[AggregatorStr, float]
-    paired_label: dict[AggregatorStr, float]
-    paired_choice: dict[AggregatorStr, float]
+class RelativeMetrics:
+    relative_source: dict[AggregatorStr, float]
+    relative_target: dict[AggregatorStr, float]
+    relative_statement: dict[AggregatorStr, float]
+    relative_question: dict[AggregatorStr, float]
+    relative_label: dict[AggregatorStr, float]
+    relative_choice: dict[AggregatorStr, float]
 
     @staticmethod
-    def as_attribute_name(paired_metric_id: PairedMetricID) -> str:
-        return f"paired_{paired_metric_id.metric.value.lower()}"
+    def as_attribute_name(metric_id: RelativeMetricID) -> str:
+        return f"relative_{metric_id.metric.value.lower()}"
 
-    def get(self, paired_metric_id: PairedMetricID) -> float:
-        attr, agg = self.as_attribute_name(paired_metric_id), paired_metric_id.agg
-        return getattr(self, attr)[agg.value]
+    def get(self, metric_id: RelativeMetricID) -> float:
+        return getattr(self, self.as_attribute_name(metric_id))[metric_id.agg.value]
 
     @classmethod
     def from_data(
@@ -520,23 +519,23 @@ class PairedAccordMetrics:
         af_or_incorrect_question_lps: dict[AggregatorOption, list[float]],
         af_or_incorrect_label_lps: dict[AccordLabel, dict[AggregatorOption, float]],
         af_or_incorrect_choice_lps: dict[AccordLabel, dict[AggregatorOption, float]],
-    ) -> "PairedAccordMetrics":
+    ) -> "RelativeMetrics":
         source = cls._pair_up(factual_or_correct_source_lps, af_or_incorrect_source_lps)
         target = cls._pair_up(factual_or_correct_target_lps, af_or_incorrect_target_lps)
         combine = {agg: lps + target[agg] for agg, lps in source.items()}
-        return PairedAccordMetrics(
-            paired_source=cls._aggregate(source),
-            paired_target=cls._aggregate(target),
-            paired_statement=cls._aggregate(combine),
-            paired_question=cls._aggregate(
+        return RelativeMetrics(
+            relative_source=cls._aggregate(source),
+            relative_target=cls._aggregate(target),
+            relative_statement=cls._aggregate(combine),
+            relative_question=cls._aggregate(
                 cls._pair_up_question(
                     factual_or_correct_question_lps, af_or_incorrect_question_lps
                 )
             ),
-            paired_label=cls._aggregate(
+            relative_label=cls._aggregate(
                 cls._pair_up(factual_or_correct_label_lps, af_or_incorrect_label_lps)
             ),
-            paired_choice=cls._aggregate(
+            relative_choice=cls._aggregate(
                 cls._pair_up(factual_or_correct_choice_lps, af_or_incorrect_choice_lps)
             ),
         )
