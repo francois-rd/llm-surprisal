@@ -179,5 +179,7 @@ class AggregatorOption(Enum):
             return min(logprobs)
         elif self == AggregatorOption.MAX:
             return max(logprobs)
+        elif self == AggregatorOption.EXTREMUM:
+            return max([abs(x) for x in logprobs])
         else:
             raise ValueError(f"Unsupported aggregator: {self}")
