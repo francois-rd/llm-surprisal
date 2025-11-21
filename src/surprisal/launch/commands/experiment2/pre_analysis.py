@@ -168,6 +168,8 @@ class LogprobData:
             return agg_to_none, agg_to_none
         all_source_lps, all_target_lps = {}, {}
         for source_lps, target_lps in current_data.logprob_of_statements.values():
+            # Aggregation is over the list of individual tokens making up a source or a
+            # target (not aggregation multiple sources/targets), so no need for top-k.
             self._aggregate(all_source_lps, source_lps, aggregators, append=True)
             self._aggregate(all_target_lps, target_lps, aggregators, append=True)
         return all_source_lps, all_target_lps
@@ -181,6 +183,8 @@ class LogprobData:
             return agg_to_none, agg_to_none
         all_source_lps, all_target_lps = {}, {}
         for key, (source, target) in current_data.logprob_of_statements.items():
+            # Aggregation is over the list of individual tokens making up a source or a
+            # target (not aggregation multiple sources/targets), so no need for top-k.
             self._aggregate(all_source_lps.setdefault(key, {}), source, aggregators)
             self._aggregate(all_target_lps.setdefault(key, {}), target, aggregators)
         return all_source_lps, all_target_lps
@@ -191,6 +195,8 @@ class LogprobData:
         all_label_lps, all_choice_lps = {}, {}
         lps = current_data.logprob_of_answer_choices
         for label, (label_lp, choice_lp) in lps.items():
+            # Aggregation is over the list of individual tokens making up a label or a
+            # choice (not aggregation multiple labels/choices), so no need for top-k.
             self._aggregate(all_label_lps.setdefault(label, {}), label_lp, aggs)
             self._aggregate(all_choice_lps.setdefault(label, {}), choice_lp, aggs)
         return all_label_lps, all_choice_lps
@@ -199,6 +205,8 @@ class LogprobData:
         self, current_data: _CurrentData, aggs: list[AggregatorOption]
     ) -> dict:
         all_forced_lps, lp = {}, current_data.logprob_of_forced_answer
+        # Aggregation is over the list of individual tokens making up a forced
+        # answer (not aggregation multiple of these), so no need for top-k.
         self._aggregate(all_forced_lps.setdefault(self.forced_label, {}), lp, aggs)
         return all_forced_lps
 
@@ -209,6 +217,7 @@ class LogprobData:
         aggregators: list[AggregatorOption],
         append: bool = False,
     ):
+        # Since none of the methods calling this one use top-k, there is no need for it.
         for a in aggregators:
             if append:
                 data.setdefault(a, []).append(a.aggregate(logprobs))
@@ -219,8 +228,12 @@ class LogprobData:
         forced_label = current_data.inference.prompt_data.label
         lp = current_data.logprob_of_forced_answer
         abs_forced = self.abs_forced_lps.setdefault(forced_label, {})
+        # Aggregation is over the list of individual tokens making up a forced
+        # answer (not aggregation multiple of these), so no need for top-k.
         self._aggregate(abs_forced, lp, AggregatorOption.absolute_options())
         rel_forced = self.rel_forced_lps.setdefault(forced_label, {})
+        # Aggregation is over the list of individual tokens making up a forced
+        # answer (not aggregation multiple of these), so no need for top-k.
         self._aggregate(rel_forced, lp, AggregatorOption.relative_options())
 
     def is_complete(self, count: int) -> bool:

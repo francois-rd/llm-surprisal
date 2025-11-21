@@ -484,6 +484,9 @@ class RelativeMetricID:
 
 @dataclass
 class RelativeMetrics:
+    # NOTE: top3 and top5 only make sense with SUM or MEAN Agg, but these don't make
+    # as much sense for relative metrics (pre-aggregating into SUM/MEAN takes a lot of
+    # the nuance out of the individualized comparison that relative metrics offer).
     relative_source: dict[AggregatorStr, float]
     relative_target: dict[AggregatorStr, float]
     relative_statement: dict[AggregatorStr, float]
