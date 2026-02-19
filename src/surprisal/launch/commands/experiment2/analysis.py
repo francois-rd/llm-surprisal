@@ -68,8 +68,12 @@ def factuality_diff_fn(group_df):
     af = group_df[group_df["Factuality"] == "Anti-Factual"]
     if af.empty:  # This is the case for subset 0 (i.e., the baseline).
         return None
+    if af["Metric"].isnull().all():  # This can be the case when the data are missing.
+        return None
     f = group_df[group_df["Factuality"] == "Factual"]
     if f.empty:  # This is the case when restricting to a specific type of correctness.
+        return None
+    if f["Metric"].isnull().all():  # This can be the case when the data are missing.
         return None
     return f["Metric"].tolist()[0] - af["Metric"].tolist()[0]
 
@@ -106,8 +110,12 @@ def opp_correctness_diff_fn(group_df):
     t = group_df[group_df["Correctness"]]
     if t.empty:  # This can be the case for subset 0 or if both LLM answers are wrong.
         return None
+    if t["Metric"].isnull().all():  # This can be the case when the data are missing.
+        return None
     f = group_df[~group_df["Correctness"]]
     if f.empty:  # This can be the case for subset 0 or if both LLM answers are correct.
+        return None
+    if f["Metric"].isnull().all():  # This can be the case when the data are missing.
         return None
     return t["Metric"].tolist()[0] - f["Metric"].tolist()[0]
 
@@ -224,12 +232,13 @@ def make_path(root_dir: str, main_type: str, llm: Nickname, sub_type: str) -> st
     return ensure_path(base_path, is_dir=True)
 
 
-def save_figure(fig, plot_path: str, file_base_name: str) -> None:
+def save_figure(fig, plot_path: str, file_base_name: str, **kwargs) -> None:
     from kaleido._kaleido_tab import KaleidoError  # noqa
 
+    no_extension_file = os.path.join(plot_path, file_base_name)
     try:
-        fig.write_image(os.path.join(plot_path, file_base_name + ".png"), scale=3.0)
-        fig.write_image(os.path.join(plot_path, file_base_name + ".pdf"))
+        fig.write_image(no_extension_file + ".png", scale=3.0, **kwargs)
+        fig.write_image(no_extension_file + ".pdf", **kwargs)
     except KaleidoError:
         pass
 

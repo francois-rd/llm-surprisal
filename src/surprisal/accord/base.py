@@ -195,3 +195,11 @@ class CsqaBase:
     correct_answer_label: AccordLabel
     answer_choices: dict[AccordLabel, AccordTerm]
     pairing_templates: list[dict]
+
+
+@dataclass
+class ComponentBoundaries:
+    statements: tuple[int, int] | None
+    question: tuple[int, int]
+    answer_choices: tuple[int, int]
+    instance: tuple[int, int]

@@ -54,7 +54,47 @@ rel_aggregators:
 - MAX
 - EXTREMUM
 flip_logprobs: true
+plot_select: false
 label_count: 5
 p_value_threshold: 0.0001
 min_subsets_passing_threshold: 4
 outlier_threshold: 2.0
+serial_visualization_instance: 1  # NOTE: when =0, there are straight line plotting artifacts. Underlying data is sound.
+serial_components:
+- INSTANCE
+#- QUESTION
+#- ANSWER_PORTION
+# NOTE: For both CHOICE and FORCED, when the data is a single token, the plotting software ignores it as it only plots
+# lines and not scatter plots (single points). So a lot of data becomes invisible in the plots.
+# NOTE: For both CHOICE and FORCED, picking the ACCORD option means the underlying text is, by definition, not the same
+# (though it *might* have the same token length, by chance). For CSQA, the text is, by definition, the same and aligned.
+#- CHOICE_MATCHING_ACCORD
+#- CHOICE_MATCHING_CSQA
+#- FORCED_MATCHING_ACCORD
+#- FORCED_MATCHING_CSQA
+collective_serial_hyperparameters:
+  instance:
+    cpd_kernel: "linear"  # linear vs rbf has pros and cons. Neither is clearly better. Haven't tested cosine yet.
+    cpd_penalty: 25  # 75 is too much. 100 is WAY too much. 50 is decent. This is with linear. Rbf: 1.0-2.0 range.
+    hampel_window_size: 5  # Best: 20. Less is not good. More does not add anything.
+    hampel_n_sigma: 3.0  # Best: 10. Sigma beyond 10 (up to 40) has no real effect. By 60-80 there is a further effect.
+  question:
+    cpd_kernel: "linear"  # Have not tested which values are best.
+    cpd_penalty: 2  # Have not tested which values are best.
+    hampel_window_size: 10  # Have not tested which values are best.
+    hampel_n_sigma: 3.0  # Have not tested which values are best.
+  answer_portion:
+    cpd_kernel: "linear"  # Have not tested which values are best.
+    cpd_penalty: 2  # Have not tested which values are best.
+    hampel_window_size: 10  # Have not tested which values are best.
+    hampel_n_sigma: 3.0  # Have not tested which values are best.
+  choices:
+    cpd_kernel: "linear"  # Have not tested which values are best.
+    cpd_penalty: 2  # Have not tested which values are best.
+    hampel_window_size: 10  # Have not tested which values are best.
+    hampel_n_sigma: 3.0  # Have not tested which values are best.
+  forced:
+    cpd_kernel: "linear"  # Have not tested which values are best.
+    cpd_penalty: 2  # Have not tested which values are best.
+    hampel_window_size: 10  # Have not tested which values are best.
+    hampel_n_sigma: 3.0  # Have not tested which values are best.

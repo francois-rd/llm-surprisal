@@ -19,6 +19,8 @@ from ....accord import (
     AccordStatementSurfacer,
     AccordTermSurfacer,
     AccordTextSurfacer,
+    CollectiveSerialHyperparameters,
+    SerialComponent,
 )
 
 
@@ -72,6 +74,7 @@ class Config:
     abs_aggregators: list[AggregatorOption] = field(default_factory=list)
     rel_aggregators: list[AggregatorOption] = field(default_factory=list)
     flip_logprobs: bool = True
+    plot_select: bool = True
     label_count: int = 5
 
     # Together, these two determine how many of the subsets for a given metric all
@@ -84,6 +87,24 @@ class Config:
     # If greater than 0, removes outliers before t-tests. Closer to 0 means more
     # aggressive cutting.
     outlier_threshold: float = 2.0
+
+    # Which instance from each subset to visualize. One-based indexing. 0 for all.
+    # NOTE: index is not the surface-leve list index but rather the paired instance
+    # index (so that both F and AF can be captured). So 1 is the first pair, 2 the
+    # second pair, and so on.
+    # TODO: When printing all (=0), the plotting software connects the last value of
+    #  one instance to the first of the next, so you get a bunch of straight lines.
+    #  These are plotting artifacts and not issues with the underlying data. Need to
+    #  fix if these plots become camera-needed one day.
+    serial_visualization_instance: int = 0
+
+    # Used for Time Series analysis by structural component in ACCORD.
+    serial_components: list[SerialComponent] = field(
+        default_factory=lambda: ["INSTANCE"]
+    )
+    collective_serial_hyperparameters: CollectiveSerialHyperparameters = (
+        CollectiveSerialHyperparameters()
+    )
 
     def get_system_prompt(self, subset: AccordSubset | None = None) -> str:
         subset = subset or self.subset

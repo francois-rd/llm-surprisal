@@ -15,7 +15,11 @@ from ....accord import (
     AccordStatementKey,
     AccordStatementSurfacer,
     AccordTerm,
+    ComponentBoundaries,
     RelativeMetrics,
+    CollectiveSerialHyperparameters,
+    CollectiveSerialMetrics,
+    SerialMetrics,
 )
 from ....inference import Inference
 from ....llms import Nickname
@@ -42,6 +46,9 @@ from .base import AccordLoader, AccordSubset, Config
 SourceTargetPairs = tuple[list[float], list[float]]
 LabelTermPairs = tuple[list[float], list[float]]
 
+FACTUAL: str = "Factual"
+ANTI_FACTUAL: str = "Anti-Factual"
+
 
 @dataclass
 class _CurrentData:
@@ -56,7 +63,16 @@ class _CurrentData:
     logprob_of_statements: dict[AccordStatementKey, SourceTargetPairs] | None = None
     logprob_of_question: list[float] | None = None
     logprob_of_answer_choices: dict[AccordLabel, LabelTermPairs] | None = None
+    logprob_of_answer_portion: list[float] | None = None
     logprob_of_forced_answer: list[float] | None = None
+
+    def get_factuality(self) -> str:
+        prompt_type = self.inference.prompt_data.prompt_type
+        return FACTUAL if prompt_type == PromptType.F else ANTI_FACTUAL
+
+    def get_reasoning_hops(self) -> int:
+        reduction_cases = self.meta_data.reduction_cases
+        return 0 if reduction_cases is None else len(reduction_cases) + 1
 
 
 @dataclass
@@ -76,24 +92,30 @@ class LogprobDataclass:
 
 
 class LogprobData:
-    def __init__(self, current_data: _CurrentData, subset: AccordSubset):
+    def __init__(
+        self,
+        current_data: _CurrentData,
+        subset: AccordSubset,
+        hps: CollectiveSerialHyperparameters,
+    ):
         prompt_data = current_data.inference.prompt_data
         self.llm: Nickname = current_data.llm
 
-        # TODO: Prompt type is accurate, but standard group IDs are not... There is a
-        #  bug in make_prompts where group_id is based on the instance, but there are
-        #  always 2 paired instances if you consider the ACCORD ID (one F and one AF).
+        # Prompt type is accurate, but standard group IDs are not... There is a
+        # bug in make_prompts where group_id is based on the instance, but there are
+        # always 2 paired instances if you consider the ACCORD ID (one F and one AF).
         #    Option 1: fix make_prompts and redo analysis.
         #    Option 2: fix it here in post: groupID becomes Accord ID less last letter
         self.accord_group_id: str = current_data.meta_data.id[:-2]
 
-        self.factuality: str = self._get_factuality(prompt_data.prompt_type)
-        self.reasoning_hops = self._get_reasoning_hops(current_data)
+        self.factuality = current_data.get_factuality()
+        self.reasoning_hops = current_data.get_reasoning_hops()
         self.distractors = self._get_distractors(subset)
         self.forced_label: AccordLabel = prompt_data.label
         self.accord_label: AccordLabel = current_data.meta_data.label
         self.csqa_label: AccordLabel = prompt_data.additional_data["csqa_label"]
         self.subset: AccordSubset = subset
+        self.hps = hps
 
         # These two are dict[aggregator, list[float] | None] where each float is the
         # aggregation of all tokens making up the logprobs for a source/target and
@@ -145,14 +167,30 @@ class LogprobData:
             current_data, AggregatorOption.relative_options()
         )
 
-    @staticmethod
-    def _get_factuality(prompt_type: PromptType) -> str:
-        return "Factual" if prompt_type == PromptType.F else "Anti-Factual"
-
-    @staticmethod
-    def _get_reasoning_hops(current_data: _CurrentData) -> int:
-        reduction_cases = current_data.meta_data.reduction_cases
-        return 0 if reduction_cases is None else len(reduction_cases) + 1
+        # Compute time-series metrics separately as they require internal modeling.
+        self.serial_metrics = CollectiveSerialMetrics(
+            instance=SerialMetrics.build_from(
+                current_data.logprob_of_instance,
+                self.hps.instance,
+            ),
+            question=SerialMetrics.build_from(
+                current_data.logprob_of_question,
+                self.hps.question,
+            ),
+            answer_portion=SerialMetrics.build_from(
+                current_data.logprob_of_answer_portion,
+                self.hps.answer_portion,
+            ),
+            choice_matching_accord=SerialMetrics.build_from(
+                current_data.logprob_of_answer_choices[self.accord_label][1],
+                self.hps.choices,
+            ),
+            choice_matching_csqa=SerialMetrics.build_from(
+                current_data.logprob_of_answer_choices[self.csqa_label][1],
+                self.hps.choices,
+            ),
+        )
+        self._add_forced_serial(self.forced_label, current_data)
 
     def _get_distractors(self, subset: AccordSubset) -> int | None:
         if subset == AccordSubset.BASELINE:
@@ -235,6 +273,17 @@ class LogprobData:
         # Aggregation is over the list of individual tokens making up a forced
         # answer (not aggregation multiple of these), so no need for top-k.
         self._aggregate(rel_forced, lp, AggregatorOption.relative_options())
+        self._add_forced_serial(forced_label, current_data)
+
+    def _add_forced_serial(self, forced_label, current_data: _CurrentData) -> None:
+        if forced_label == self.accord_label:
+            self.serial_metrics.forced_matching_accord = SerialMetrics.build_from(
+                current_data.logprob_of_forced_answer, self.hps.forced
+            )
+        if forced_label == self.csqa_label:
+            self.serial_metrics.forced_matching_csqa = SerialMetrics.build_from(
+                current_data.logprob_of_forced_answer, self.hps.forced
+            )
 
     def is_complete(self, count: int) -> bool:
         """Returns whether each dict with multiple AccordLabels has 'count' of them."""
@@ -243,7 +292,9 @@ class LogprobData:
         return partial and len(self.abs_forced_lps) == count
 
     def crystalize(
-        self, partner: Union["LogprobData", None], start_label: AccordLabel
+        self,
+        partner: Union["LogprobData", None],
+        start_label: AccordLabel,
     ) -> list[LogprobDataclass]:
         metrics = self._get_metrics(start_label)
         if partner is None:
@@ -276,6 +327,7 @@ class LogprobData:
             accord_label=self.accord_label,
             csqa_label=self.csqa_label,
             start_label=start_label,
+            serial_metrics=self.serial_metrics,
         )
 
     def _crystalize(
@@ -298,8 +350,8 @@ class LogprobData:
         )
 
     def _is_self_factual_vs_partner(self, partner: "LogprobData") -> bool:
-        if self.factuality == "Factual":
-            if partner.factuality != "Anti-Factual":
+        if self.factuality == FACTUAL:
+            if partner.factuality != ANTI_FACTUAL:
                 raise ValueError(
                     f"Self and Partner have the same factuality!\n"
                     f"Self: {self}\n"
@@ -307,7 +359,7 @@ class LogprobData:
                 )
             return True
         else:
-            if partner.factuality != "Factual":
+            if partner.factuality != FACTUAL:
                 raise ValueError(
                     f"Self and Partner have the same factuality!\n"
                     f"Self: {self}\n"
@@ -352,11 +404,52 @@ class LogprobData:
             factual_or_correct_question_lps=self.rel_question_lps,
             factual_or_correct_label_lps=self.rel_label_lps,
             factual_or_correct_choice_lps=self.rel_choice_lps,
+            factual_or_correct_serial_metrics=self.serial_metrics,
             af_or_incorrect_source_lps=partner.rel_source_lps,
             af_or_incorrect_target_lps=partner.rel_target_lps,
             af_or_incorrect_question_lps=partner.rel_question_lps,
             af_or_incorrect_label_lps=partner.rel_label_lps,
             af_or_incorrect_choice_lps=partner.rel_choice_lps,
+            af_or_incorrect_serial_metrics=partner.serial_metrics,
+        )
+
+
+class ComponentBoundariesFinder:
+    def __init__(self, accord_loader: AccordLoader, accord_subset: AccordSubset):
+        self.is_inverted = accord_loader.invert
+        self.is_baseline = accord_subset == AccordSubset.BASELINE
+
+    def statements(self, c: _CurrentData) -> tuple[int, int] | None:
+        if self.is_baseline:
+            return None
+        end_idx = c.question_indices[0]
+        if self.is_inverted:
+            end_idx = c.answer_tag_indices[0]
+        return c.statement_tag_indices[1], end_idx
+
+    @staticmethod
+    def question(c: _CurrentData) -> tuple[int, int]:
+        return c.question_indices
+
+    def answer_choices(self, c: _CurrentData) -> tuple[int, int]:
+        end_idx = c.statement_tag_indices[0]
+        if self.is_baseline or not self.is_inverted:
+            end_idx = c.answer_tag_indices[0]
+        assert c.question_indices[1] < end_idx
+        return c.question_indices[1], end_idx
+
+    def instance(self, c: _CurrentData) -> tuple[int, int]:
+        start_idx = c.statement_tag_indices[1]
+        if self.is_baseline or self.is_inverted:
+            start_idx = c.question_indices[0]
+        return start_idx, c.answer_tag_indices[0]
+
+    def to_dataclass(self, c: _CurrentData) -> ComponentBoundaries:
+        return ComponentBoundaries(
+            statements=self.statements(c),
+            question=self.question(c),
+            answer_choices=self.answer_choices(c),
+            instance=self.instance(c),
         )
 
 
@@ -367,11 +460,13 @@ class SubsetLoader:
         accord_subset: AccordSubset,
         pre_analysis_dir: str,
         flip_logprobs: bool,
+        **serial_hyperparameters,
     ):
         self.accord_loader = accord_loader
         self.accord_subset = accord_subset
         self.pre_analysis_dir = pre_analysis_dir
         self.flip = flip_logprobs
+        self.serial_hps = serial_hyperparameters
         self.data = self.logger = None
         self.current_data: _CurrentData | None = None
         self.meta_datas = {i.meta_data.id: i.meta_data for i in accord_loader.load()}
@@ -385,6 +480,7 @@ class SubsetLoader:
         self.formatter = ConceptNetFormatter(
             template="", method=FormatMethod.ACCORD, formatter=...
         )
+        self.boundaries = ComponentBoundariesFinder(accord_loader, accord_subset)
 
     def load(self, inference_path: str, llm: Nickname) -> dict[AccordID, LogprobData]:
         self.data, self.logger = {}, None
@@ -406,6 +502,7 @@ class SubsetLoader:
                 and self._fill_logprob_of_statements()
                 and self._fill_logprob_of_question()
                 and self._fill_logprob_of_answer_choices()
+                and self._fill_logprob_of_answer_portion()
                 and self._fill_logprob_of_forced_answer()
             )
             if not success:
@@ -420,14 +517,11 @@ class SubsetLoader:
     def _get_meta_data(self, inference: Inference) -> AccordMetaData:
         return self.meta_datas[inference.prompt_data.additional_data["accord_id"]]
 
-    def _is_baseline(self) -> bool:
-        return self.accord_subset == AccordSubset.BASELINE
-
     def _first_in_group(self) -> bool:
         return self.current_data.meta_data.id not in self.data
 
     def _make_logprob_data(self, data: _CurrentData) -> LogprobData:
-        return LogprobData(data, self.accord_subset)
+        return LogprobData(data, self.accord_subset, **self.serial_hps)
 
     def _get_sequence(
         self,
@@ -443,7 +537,7 @@ class SubsetLoader:
         return spaced_sequences[0]
 
     def _fill_statement_tag_indices(self) -> bool:
-        if self._is_baseline():
+        if self.boundaries.is_baseline:
             self.current_data.statement_tag_indices = [-1, -1]
             return True
         statement_tag = self.accord_loader.surfacer.ordering_surfacer.prefix.strip()
@@ -472,20 +566,17 @@ class SubsetLoader:
         return self.current_data.answer_tag_indices is not None
 
     def _fill_logprob_of_instance(self) -> bool:
-        c = self.current_data
         if not self._first_in_group():
             return True
-        start_idx = c.statement_tag_indices[1]
-        if self._is_baseline() or self.accord_loader.invert:
-            start_idx = c.question_indices[0]
-        end_idx = c.answer_tag_indices[0]
+        c = self.current_data
+        start_idx, end_idx = self.boundaries.instance(c)
         c.logprob_of_instance = c.logprobs.to_chosen_logprobs(start_idx, end_idx)
         return True
 
     def _fill_logprob_of_statements(self) -> bool:
         if not self._first_in_group():
             return True
-        if self._is_baseline():
+        if self.boundaries.is_baseline:
             return True
         results = {}
         for lab, tree_data in self.current_data.meta_data.statements.items():
@@ -504,10 +595,7 @@ class SubsetLoader:
     ) -> SourceTargetPairs | None:
         # Find the exact boundaries of this particular statement.
         text = self.statement_surfacer(self.current_data.meta_data, ordering=ordering)
-        start_idx = self.current_data.statement_tag_indices[1]
-        end_idx = self.current_data.question_indices[0]
-        if self.accord_loader.invert:
-            end_idx = self.current_data.answer_tag_indices[0]
+        start_idx, end_idx = self.boundaries.statements(self.current_data)
         sequences = self.current_data.logprobs.indices_of(text, start_idx, end_idx)
         seq = self._get_sequence(sequences, f"Statement '{text}'", start_idx, end_idx)
         if seq is None:
@@ -538,17 +626,15 @@ class SubsetLoader:
         if not self._first_in_group():
             return True
         c = self.current_data
-        c.logprob_of_question = c.logprobs.to_chosen_logprobs(*c.question_indices)
+        start_idx, end_idx = self.boundaries.question(c)
+        c.logprob_of_question = c.logprobs.to_chosen_logprobs(start_idx, end_idx)
         return True
 
     def _fill_logprob_of_answer_choices(self) -> bool:
         if not self._first_in_group():
             return True
         results = {}
-        start_idx = self.current_data.question_indices[1]
-        end_idx = self.current_data.statement_tag_indices[0]
-        if self._is_baseline() or not self.accord_loader.invert:
-            end_idx = self.current_data.answer_tag_indices[0]
+        start_idx, end_idx = self.boundaries.answer_choices(self.current_data)
         for label, term in self.current_data.meta_data.answer_choices.items():
             label_ss = self.current_data.logprobs.indices_of(label, start_idx, end_idx)
             label_s = self._get_sequence(
@@ -564,6 +650,14 @@ class SubsetLoader:
                 return False
             results[label] = label_s.to_chosen_logprobs(), term_s.to_chosen_logprobs()
         self.current_data.logprob_of_answer_choices = results
+        return True
+
+    def _fill_logprob_of_answer_portion(self) -> bool:
+        if not self._first_in_group():
+            return True
+        c = self.current_data
+        start_idx, end_idx = self.boundaries.answer_choices(self.current_data)
+        c.logprob_of_answer_portion = c.logprobs.to_chosen_logprobs(start_idx, end_idx)
         return True
 
     def _fill_logprob_of_forced_answer(self) -> bool:
@@ -586,10 +680,12 @@ class SubsetLoader:
         log_path = os.path.join(self.pre_analysis_dir, log_file)
         self.logger = self.logger or init_logger(logger_name, log_path)
         no_line_breaks = logprobs.to_text(start_idx, end_idx).replace("\n", "<NL>")
-        self.logger.info(
-            f"GroupID={group_id}: {main_text} has "
-            f"{num_occurrences} occurrences in '{no_line_breaks}'."
-        )
+        # TODO: For some reason, is printing to console in addition to file.
+        #  Had this bug in the past, but can't remember the cause.
+        # self.logger.info(
+        #    f"GroupID={group_id}: {main_text} has "
+        #    f"{num_occurrences} occurrences in '{no_line_breaks}'."
+        # )
 
 
 @command(name="exp.2.pre.analysis")
@@ -603,6 +699,7 @@ class Experiment2PreAnalysis:
                 accord_subset=subset,
                 pre_analysis_dir=self.out_dir,
                 flip_logprobs=self.cfg.flip_logprobs,
+                hps=self.cfg.collective_serial_hyperparameters,
             )
         self.print = ConditionalPrinter(self.cfg.verbose)
         self.data_by_llm = {}
@@ -612,6 +709,7 @@ class Experiment2PreAnalysis:
             self.cfg.subset = subset
             self._load(subset)
         for llm, data in self.data_by_llm.items():
+            self.print(f"Saving all processed data for {llm}...")
             out_file = os.path.join(self.out_dir, f"{llm.replace('/', '-')}.jsonl")
             save_dataclass_jsonl(out_file, *data)
 

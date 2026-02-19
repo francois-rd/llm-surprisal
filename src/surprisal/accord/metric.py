@@ -6,6 +6,7 @@ from scipy.stats import entropy
 import numpy as np
 
 from .base import AccordLabel, AccordStatementID
+from .time_series import CollectiveSerialMetrics
 from ..core import AggregatorOption, AggregatorStr
 
 
@@ -232,6 +233,8 @@ class AbsoluteMetrics:
     mass_label_all: dict[AggregatorStr, float]
     mass_choice_all: dict[AggregatorStr, float]
 
+    serial_metrics: CollectiveSerialMetrics
+
     @staticmethod
     def as_attribute_name(metric_id: MetricID) -> str:
         metrics = [
@@ -264,6 +267,7 @@ class AbsoluteMetrics:
         accord_label: AccordLabel,
         csqa_label: AccordLabel,
         start_label: AccordLabel,
+        serial_metrics: CollectiveSerialMetrics,
     ) -> "AbsoluteMetrics":
         return AbsoluteMetrics(
             # All/Top3/Top5 x source/target/both surprisal.
@@ -360,6 +364,7 @@ class AbsoluteMetrics:
             mass_forced_all=cls._mass(forced_lps),
             mass_label_all=cls._mass(label_lps),
             mass_choice_all=cls._mass(choice_lps),
+            serial_metrics=serial_metrics,
         )
 
     @staticmethod
@@ -494,6 +499,8 @@ class RelativeMetrics:
     relative_label: dict[AggregatorStr, float]
     relative_choice: dict[AggregatorStr, float]
 
+    serial_metrics: CollectiveSerialMetrics
+
     @staticmethod
     def as_attribute_name(metric_id: RelativeMetricID) -> str:
         return f"relative_{metric_id.metric.value.lower()}"
@@ -513,6 +520,7 @@ class RelativeMetrics:
         factual_or_correct_question_lps: dict[AggregatorOption, list[float]],
         factual_or_correct_label_lps: dict[AccordLabel, dict[AggregatorOption, float]],
         factual_or_correct_choice_lps: dict[AccordLabel, dict[AggregatorOption, float]],
+        factual_or_correct_serial_metrics: CollectiveSerialMetrics,
         af_or_incorrect_source_lps: dict[
             tuple[AccordLabel, AccordStatementID], dict[AggregatorOption, float]
         ],
@@ -522,6 +530,7 @@ class RelativeMetrics:
         af_or_incorrect_question_lps: dict[AggregatorOption, list[float]],
         af_or_incorrect_label_lps: dict[AccordLabel, dict[AggregatorOption, float]],
         af_or_incorrect_choice_lps: dict[AccordLabel, dict[AggregatorOption, float]],
+        af_or_incorrect_serial_metrics: CollectiveSerialMetrics,
     ) -> "RelativeMetrics":
         source = cls._pair_up(factual_or_correct_source_lps, af_or_incorrect_source_lps)
         target = cls._pair_up(factual_or_correct_target_lps, af_or_incorrect_target_lps)
@@ -540,6 +549,9 @@ class RelativeMetrics:
             ),
             relative_choice=cls._aggregate(
                 cls._pair_up(factual_or_correct_choice_lps, af_or_incorrect_choice_lps)
+            ),
+            serial_metrics=factual_or_correct_serial_metrics.relative_to(
+                af_or_incorrect_serial_metrics
             ),
         )
 
@@ -561,7 +573,7 @@ class RelativeMetrics:
     ) -> dict[AggregatorOption, list[float]]:
         result = {}
         for agg, f_or_c_lps in factual_or_correct_lps.items():
-            result[agg] = [  # Not much point in using numpy is converting back to list.
+            result[agg] = [  # Not much point in using numpy if converting back to list.
                 f_or_c - af_or_incorrect_lps[agg][i]
                 for i, f_or_c in enumerate(f_or_c_lps)
             ]
